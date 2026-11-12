@@ -46,6 +46,17 @@ Route::get('/test-students', function () {
     );
 });
 
+Route::get('/db-info', function () {
+    return response()->json([
+        'driver' => \Illuminate\Support\Facades\DB::getDriverName(),
+        'database' => \Illuminate\Support\Facades\DB::getDatabaseName(),
+        'connection' => config('database.default'),
+        'env_file_exists' => file_exists(base_path('.env')),
+        'db_connection_env' => env('DB_CONNECTION'),
+        'db_database_env' => env('DB_DATABASE'),
+    ]);
+});
+
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
