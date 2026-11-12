@@ -286,14 +286,8 @@ class AuthController extends Controller
                 });
             }
 
-            $isLogMailer = config('mail.default') === 'log' || env('MAIL_MAILER') === 'log';
-            $isLocal = app()->environment('local') || config('app.debug');
-
             return response()->json([
-                'message' => $isLogMailer
-                    ? "OTP code generated: {$otp} (Mailer is currently set to 'log' in .env)"
-                    : "✅ OTP sent to {$user->email}. Please check your inbox.",
-                'dev_otp' => ($isLocal || $isLogMailer) ? $otp : null,
+                'message' => "A 6-digit OTP code has been sent to {$user->email}. Please check your inbox.",
             ]);
         } catch (\Throwable $e) {
             $rawError = $e->getMessage();
