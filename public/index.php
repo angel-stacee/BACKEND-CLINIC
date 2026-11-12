@@ -9,6 +9,10 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
+if (!file_exists(__DIR__ . '/../.env') && file_exists(__DIR__ . '/../.env.example')) {
+    @copy(__DIR__ . '/../.env.example', __DIR__ . '/../.env');
+}
+
 if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php')) {
     require $maintenance;
 }
