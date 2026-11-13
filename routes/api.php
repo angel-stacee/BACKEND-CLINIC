@@ -51,6 +51,8 @@ Route::get('/db-info', function () {
         'driver' => \Illuminate\Support\Facades\DB::getDriverName(),
         'database' => \Illuminate\Support\Facades\DB::getDatabaseName(),
         'connection' => config('database.default'),
+        'base_path' => base_path(),
+        'public_html' => realpath(base_path('..')),
         'env_file_exists' => file_exists(base_path('.env')),
         'db_connection_env' => env('DB_CONNECTION'),
         'db_database_env' => env('DB_DATABASE'),
