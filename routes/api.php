@@ -11,6 +11,9 @@ use App\Http\Controllers\FacultyController;
 use App\Http\Controllers\MedicineController;
 use App\Http\Controllers\AiChatbotController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\OrganizationController;
+
+Route::get('/organization', [OrganizationController::class, 'index']);
 
 Route::get('/login', function () {
     $frontendUrl = rtrim((string) config('services.frontend.url', 'http://localhost:5173'), '/');
@@ -75,4 +78,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('medicines', MedicineController::class);
     Route::post('/ai-chat', [AiChatbotController::class, 'chat']);
     Route::get('/reports/monthly', [ReportController::class, 'monthly']);
+
+    // Organization Management (Database-backed)
+    Route::post('/organization/members', [OrganizationController::class, 'saveMember']);
+    Route::put('/organization/members/{id}', [OrganizationController::class, 'saveMember']);
+    Route::delete('/organization/members/{id}', [OrganizationController::class, 'deleteMember']);
+    Route::post('/organization/reset', [OrganizationController::class, 'resetDefaults']);
+    Route::put('/organization/categories/{category}', [OrganizationController::class, 'updateCategory']);
 });
