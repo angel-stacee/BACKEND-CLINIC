@@ -104,15 +104,10 @@ class AiChatbotController extends Controller
 
         if (! $apiKey) {
             $offlineReply = $this->generateOfflineReply($latestUserMessage, $clinicSnapshot);
-            if ($offlineReply) {
-                return response()->json([
-                    'message' => $offlineReply,
-                ]);
-            }
 
             return response()->json([
-                'message' => 'The AI assistant is waiting for an API token. Please configure a free Google Gemini API key (GEMINI_API_KEY) in your environment settings.',
-            ], 503);
+                'message' => $offlineReply,
+            ]);
         }
 
         try {
@@ -213,13 +208,54 @@ class AiChatbotController extends Controller
     {
         $q = strtolower(trim($userQuery));
 
+        // Greetings
+        if (in_array($q, ['hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening'], true)) {
+            return "Hello! I am the TCC Clinic Assistant. How can I help you today with clinic workflows, statistics, or medicine inventory?";
+        }
+
+        // Patient / Student / Faculty / Staff addition or forms
+        if (str_contains($q, 'patient') || (str_contains($q, 'add') && (str_contains($q, 'new') || str_contains($q, 'form') || str_contains($q, 'record') || str_contains($q, 'student') || str_contains($q, 'staff') || str_contains($q, 'faculty')))) {
+            if (str_contains($q, 'add') || str_contains($q, 'form') || str_contains($q, 'register') || str_contains($q, 'create') || str_contains($q, 'new')) {
+                return "To add a new patient in the system:\n"
+                    ."1. Go to the Patient Records section (Students, Staff, Faculty) from the navigation bar.\n"
+                    ."2. Click the '+ Add Patient' button at the top right.\n"
+                    ."3. Select the patient category: Student, Faculty, or Staff.\n"
+                    ."4. Fill in the required patient details (Name, ID, Academic/Department details, Sex, Birth Date, Contact Number, and Address).\n"
+                    ."5. Click 'Save Patient' to register the record.";
+            }
+
+            $students = $clinicSnapshot['students'] ?? 0;
+            $staff = $clinicSnapshot['staff'] ?? 0;
+            $faculty = $clinicSnapshot['faculty'] ?? 0;
+            $total = $students + $staff + $faculty;
+
+            return "Patient Records Summary:\n"
+                ."• Total patients: {$total}\n"
+                ."• Students: {$students}\n"
+                ."• Faculty: {$faculty}\n"
+                ."• Staff: {$staff}\n\n"
+                ."You can search, add, edit, or view medical profiles under the Patient Records section.";
+        }
+
+        // Visits recording or counts
         if (str_contains($q, 'visit')) {
+            if (str_contains($q, 'add') || str_contains($q, 'new') || str_contains($q, 'record') || str_contains($q, 'how') || str_contains($q, 'log')) {
+                return "To record a new clinic visit:\n"
+                    ."1. Open the Clinic Visits page from the navigation bar.\n"
+                    ."2. Click the '+ New Visit' button.\n"
+                    ."3. Search and select the patient (Student, Faculty, or Staff).\n"
+                    ."4. Select the Nurse on Duty, Reason for Visit, Vital Signs, Symptoms, Assessment, and Treatment.\n"
+                    ."5. If medicine is dispensed, choose the Medicine/Supply and enter the quantity used.\n"
+                    ."6. Click 'Save Visit' to log the record.";
+            }
+
             $count = $clinicSnapshot['clinic_visits_this_month'] ?? 0;
 
             return "There have been {$count} clinic visit(s) recorded so far this month.";
         }
 
-        if (str_contains($q, 'medicine') || str_contains($q, 'stock') || str_contains($q, 'inventory') || str_contains($q, 'drug')) {
+        // Medicine / Stock / Inventory
+        if (str_contains($q, 'medicine') || str_contains($q, 'stock') || str_contains($q, 'inventory') || str_contains($q, 'drug') || str_contains($q, 'supply')) {
             $total = $clinicSnapshot['medicines']['total'] ?? 0;
             $low = $clinicSnapshot['medicines']['low_stock'] ?? 0;
             $out = $clinicSnapshot['medicines']['out_of_stock'] ?? 0;
@@ -240,19 +276,32 @@ class AiChatbotController extends Controller
             return "The clinic system currently manages {$staff} staff member(s) and {$faculty} faculty member(s).";
         }
 
-        if (str_contains($q, 'how') && (str_contains($q, 'record') || str_contains($q, 'add') || str_contains($q, 'create') || str_contains($q, 'new'))) {
-            return "To record a clinic visit:\n1. Open the Clinic Visits page from the navigation bar.\n2. Click the '+ New Visit' button.\n3. Search for the student or staff patient.\n4. Enter the symptoms, treatment given, and dispensed medicine.\n5. Click Save to log the visit.";
+        // Reports
+        if (str_contains($q, 'report') || str_contains($q, 'export') || str_contains($q, 'summary') || str_contains($q, 'statistic')) {
+            return "To view and export clinic reports:\n"
+                ."1. Click 'Reports' in the navigation menu.\n"
+                ."2. Select your desired date range (daily, weekly, monthly, or custom).\n"
+                ."3. View visit distributions, common symptoms, and medication usage.\n"
+                ."4. Click 'Export' to generate a report.";
         }
 
-        if (str_contains($q, 'hour') || str_contains($q, 'schedule') || str_contains($q, 'open')) {
+        if (str_contains($q, 'hour') || str_contains($q, 'schedule') || str_contains($q, 'open') || str_contains($q, 'time')) {
             return 'The TCC Clinic is open during regular school operating hours (Monday to Friday, 8:00 AM – 5:00 PM). For urgent symptoms outside clinic hours, please contact hospital emergency services.';
         }
 
         if (str_contains($q, 'help') || str_contains($q, 'what can you do') || str_contains($q, 'what do you do')) {
-            return "I am the TCC Clinic Assistant. I can help you with:\n• Clinic statistics (monthly visits, patient records)\n• Medicine stock counts and inventory status\n• System navigation and recording procedures\n• General clinic policies and first aid guidance";
+            return "I am the TCC Clinic Assistant. I can help you with:\n"
+                ."• Patient registration procedures and records ('add new patient form')\n"
+                ."• Clinic visit logs and statistics ('how to add visit', 'visits this month')\n"
+                ."• Medicine stock counts and low-stock inventory ('medicine stock')\n"
+                ."• Clinic operating hours and guidelines";
         }
 
-        return null;
+        return "I can help with TCC Clinic workflows and statistics:\n"
+            ."• Patient Registration: Type 'add new patient form' or 'how to add patient'\n"
+            ."• Clinic Visits: Type 'how to record visit' or 'visits this month'\n"
+            ."• Medicine Inventory: Type 'medicine stock' or 'low stock'\n"
+            ."• Clinic Reports: Type 'clinic reports'";
     }
 
     private function isClinicRelatedQuestion(string $question): bool
