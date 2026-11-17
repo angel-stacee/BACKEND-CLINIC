@@ -24,7 +24,7 @@ class ReportController extends Controller
         $visits = ClinicVisit::query()
             ->select([
                 'id', 'student_id', 'faculty_id', 'staff_id', 'nurse_id',
-                'medicine_id', 'medicine_quantity', 'visit_date', 'reason',
+                'medicine_id', 'medicine_quantity', 'visit_date', 'reason', 'symptoms',
             ])
             ->with([
                 'student:id,first_name,middle_name,last_name',
@@ -57,7 +57,11 @@ class ReportController extends Controller
 
         $reasons = $visits
             ->groupBy(function ($visit) {
-                return trim($visit->reason ?: 'Other');
+                $r = trim($visit->reason ?: 'Other');
+                if (strtolower($r) === 'other' && ! empty(trim($visit->symptoms ?? ''))) {
+                    return trim($visit->symptoms);
+                }
+                return $r;
             })
             ->map(function ($group, $reason) {
                 return [
@@ -163,6 +167,11 @@ class ReportController extends Controller
                 $personType = 'Staff';
             }
 
+            $displayReason = $visit->reason;
+            if (strtolower(trim($displayReason ?? '')) === 'other' && ! empty(trim($visit->symptoms ?? ''))) {
+                $displayReason = trim($visit->symptoms);
+            }
+
             return [
                 'id' => $visit->id,
 
@@ -174,7 +183,9 @@ class ReportController extends Controller
 
                 'person_type' => $personType,
 
-                'reason' => $visit->reason,
+                'reason' => $displayReason,
+
+                'symptoms' => $visit->symptoms,
 
                 'medicine' => $visit->medicine?->medicine_name,
 
