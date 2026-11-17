@@ -79,7 +79,7 @@ class FacultyController extends Controller
             'contact_number' => 'nullable|string|max:255',
             'address' => 'nullable|string|max:255',
         ], [
-            'employee_id.unique' => "Employee ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
+            'employee_id.unique' => "Faculty ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
         ]);
 
         $employeeId = trim($validated['employee_id']);
@@ -120,7 +120,7 @@ class FacultyController extends Controller
             'contact_number' => 'nullable|string|max:255',
             'address' => 'nullable|string|max:255',
         ], [
-            'employee_id.unique' => "Employee ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
+            'employee_id.unique' => "Faculty ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
         ]);
 
         $employeeId = trim($validated['employee_id']);

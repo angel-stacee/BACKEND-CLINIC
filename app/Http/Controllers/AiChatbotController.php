@@ -279,7 +279,7 @@ class AiChatbotController extends Controller
 
         $category = $state['category'];
         $catLabel = ucfirst($category);
-        $idLabel = $category === 'student' ? 'Student ID' : ($category === 'faculty' ? 'Employee ID' : 'Staff ID');
+        $idLabel = $category === 'student' ? 'Student ID' : ($category === 'faculty' ? 'Faculty ID' : 'Staff ID');
 
         // 2. Missing Full Name?
         if (empty($state['full_name'])) {
@@ -426,7 +426,7 @@ class AiChatbotController extends Controller
             $existing = Faculty::where('employee_id', $identifier)->first();
             if ($existing) {
                 return [
-                    'message' => "⚠️ Employee ID **{$identifier}** already exists. No record was saved.",
+                    'message' => "⚠️ Faculty ID **{$identifier}** already exists. No record was saved.",
                 ];
             }
 
@@ -595,7 +595,7 @@ class AiChatbotController extends Controller
                 }
 
                 // 3. ID question (or duplicate ID prompt)
-                if (str_contains($bot, 'Student ID number') || str_contains($bot, 'Employee ID number') || str_contains($bot, 'Staff ID number') || str_contains($bot, 'already registered') || str_contains($bot, 'different Student ID') || str_contains($bot, 'different Employee ID') || str_contains($bot, 'different Staff ID')) {
+                if (str_contains($bot, 'Student ID number') || str_contains($bot, 'Faculty ID number') || str_contains($bot, 'Employee ID number') || str_contains($bot, 'Staff ID number') || str_contains($bot, 'already registered') || str_contains($bot, 'different Student ID') || str_contains($bot, 'different Faculty ID') || str_contains($bot, 'different Employee ID') || str_contains($bot, 'different Staff ID')) {
                     if (preg_match('/\b(\d{7,10}|[A-Za-z0-9\-]{5,15})\b/', $userMsg, $idm)) {
                         $state['identifier'] = $idm[1];
                     }

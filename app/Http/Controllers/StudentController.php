@@ -68,7 +68,7 @@ class StudentController extends Controller
                 'available' => false,
                 'category' => 'faculty',
                 'name' => $name,
-                'message' => "Employee ID '{$id}' is already in use by faculty member {$name}. Please enter a different ID.",
+                'message' => "Faculty ID '{$id}' is already in use by faculty member {$name}. Please enter a different ID.",
             ]);
         }
 
