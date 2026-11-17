@@ -79,7 +79,7 @@ class MedicineController extends Controller
             })
             ->latest('created_at')
             ->latest('id')
-            ->paginate($validated['per_page'] ?? 50)
+            ->paginate($validated['per_page'] ?? 15)
             ->withQueryString();
 
         if (! ($validated['include_summary'] ?? false)) {
