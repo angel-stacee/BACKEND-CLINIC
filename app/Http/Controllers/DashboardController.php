@@ -17,6 +17,10 @@ class DashboardController extends Controller
         $totalStaff = Staff::count();
         $totalFaculty = Faculty::count();
         $totalVisits = ClinicVisit::count();
+        $studentVisitsTotal = ClinicVisit::whereNotNull('student_id')->count();
+        $employeeVisitsTotal = ClinicVisit::where(function ($q) {
+            $q->whereNotNull('faculty_id')->orWhereNotNull('staff_id');
+        })->count();
         $maleCount = Student::whereRaw('LOWER(sex) = ?', ['male'])->count()
             + Staff::whereRaw('LOWER(sex) = ?', ['male'])->count()
             + Faculty::whereRaw('LOWER(sex) = ?', ['male'])->count();
@@ -140,6 +144,11 @@ class DashboardController extends Controller
             'total_patients' => $totalStudents + $totalStaff + $totalFaculty,
             'total_visits' => $totalVisits,
             'total_records' => $totalVisits,
+            'visit_totals' => [
+                'total' => $totalVisits,
+                'students' => $studentVisitsTotal,
+                'employees' => $employeeVisitsTotal,
+            ],
             'medicine_alerts' => [
                 'expired_count' => Medicine::whereNotNull('expiration_date')->where('expiration_date', '<', $today)->count(),
                 'expiring_soon_count' => Medicine::whereNotNull('expiration_date')->where('expiration_date', '>=', $today)->where('expiration_date', '<=', $soonDate)->count(),
