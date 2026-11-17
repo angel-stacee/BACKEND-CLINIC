@@ -226,7 +226,7 @@ class AiChatbotController extends Controller
             }
         }
 
-        // Did the user trigger patient registration in this turn?
+        // Did the user trigger patient registration in this turn or earlier?
         $isStartTrigger = (bool) preg_match(
             '/\b(add|register|record|create|input)\b.*\b(patient|student|staff|faculty)\b/i',
             $latestUserMessage
@@ -240,8 +240,8 @@ class AiChatbotController extends Controller
         }
 
         // Handle cancellation
-        if (preg_match('/^(cancel|abort|stop|exit|quit|never\s*mind|no|wag|ayoko)\b/i', $latestUserMessage)) {
-            if ($hasIntakeHistory) {
+        if (preg_match('/^(cancel|abort|stop|exit|quit|never\s*mind|no\b|wag|ayoko)/i', $latestUserMessage)) {
+            if ($hasIntakeHistory && ! str_contains($lastAssistantIntakeMsg ?? '', 'Would you like me to record this patient now?')) {
                 return [
                     'message' => "❌ **Patient Registration Cancelled.**\n\nNo records were saved. How else can I assist you today with clinic workflows or statistics?",
                 ];
@@ -261,44 +261,11 @@ class AiChatbotController extends Controller
             }
         }
 
-        // Collect all intake messages from the point where intake started
-        $intakeUserTexts = [];
-        $intakeStarted = false;
-        foreach ($messages as $m) {
-            if ($m['role'] === 'user') {
-                if ($intakeStarted || preg_match('/\b(add|register|record|create|new)\b.*\b(patient|student|staff|faculty)\b/i', $m['content'])) {
-                    $intakeStarted = true;
-                }
-                if ($intakeStarted) {
-                    $intakeUserTexts[] = $m['content'];
-                }
-            }
-        }
+        // Extract accumulated state across the conversation history
+        $state = $this->extractIntakeState($messages);
 
-        $allIntakeText = implode(" \n ", $intakeUserTexts);
-
-        // Detect Category
-        $category = null;
-        if (preg_match('/\b(faculty|prof|instructor|teacher|dean)\b/i', $allIntakeText)) {
-            $category = 'faculty';
-        } elseif (preg_match('/\b(staff|employee|non-teaching|clerk|guard)\b/i', $allIntakeText)) {
-            $category = 'staff';
-        } elseif (preg_match('/\b(student|stud)\b/i', $allIntakeText)) {
-            $category = 'student';
-        }
-
-        // If the previous question asked for category specifically
-        if (! $category && $lastAssistantIntakeMsg && str_contains($lastAssistantIntakeMsg, 'What category is the patient?')) {
-            if (preg_match('/^\s*1\b|\bstudent\b/i', $latestUserMessage)) {
-                $category = 'student';
-            } elseif (preg_match('/^\s*2\b|\bfaculty\b/i', $latestUserMessage)) {
-                $category = 'faculty';
-            } elseif (preg_match('/^\s*3\b|\bstaff\b/i', $latestUserMessage)) {
-                $category = 'staff';
-            }
-        }
-
-        if (! $category) {
+        // 1. Missing Category?
+        if (empty($state['category'])) {
             return [
                 'message' => "📋 [Patient Registration]\n\n"
                     ."I would be glad to help you record a new patient right here in the chat!\n\n"
@@ -310,27 +277,12 @@ class AiChatbotController extends Controller
             ];
         }
 
-        // Extract ID
-        $identifier = null;
-        if (preg_match('/\b(20\d{6,10})\b/', $allIntakeText, $idm)) {
-            $identifier = $idm[1];
-        } elseif (preg_match('/(?:id|number)[:\s]+([A-Za-z0-9\-]+)/i', $allIntakeText, $idm)) {
-            $identifier = $idm[1];
-        } elseif ($lastAssistantIntakeMsg && (str_contains($lastAssistantIntakeMsg, 'Student ID number') || str_contains($lastAssistantIntakeMsg, 'Employee ID number') || str_contains($lastAssistantIntakeMsg, 'Staff ID number'))) {
-            $cleanId = trim(preg_replace('/[^A-Za-z0-9\-]/', '', $latestUserMessage));
-            if (! empty($cleanId)) {
-                $identifier = $cleanId;
-            }
-        }
+        $category = $state['category'];
+        $catLabel = ucfirst($category);
+        $idLabel = $category === 'student' ? 'Student ID' : ($category === 'faculty' ? 'Employee ID' : 'Staff ID');
 
-        // Extract Full Name
-        $nameInfo = $this->extractPatientName($messages, $lastAssistantIntakeMsg, $allIntakeText);
-        $fullName = $nameInfo['full_name'];
-
-        // If name missing, ask for name
-        if (empty($fullName)) {
-            $catLabel = ucfirst($category);
-
+        // 2. Missing Full Name?
+        if (empty($state['full_name'])) {
             return [
                 'message' => "📋 [Patient Registration]\n\n"
                     ."Great! We are registering a **{$catLabel}**.\n\n"
@@ -339,16 +291,18 @@ class AiChatbotController extends Controller
             ];
         }
 
-        // If ID missing, ask for ID
-        if (empty($identifier)) {
-            $idLabel = $category === 'student' ? 'Student ID' : ($category === 'faculty' ? 'Employee ID' : 'Staff ID');
+        $fullName = $state['full_name'];
 
+        // 3. Missing ID?
+        if (empty($state['identifier'])) {
             return [
                 'message' => "📋 [Patient Registration]\n\n"
                     ."Got it! What is **{$fullName}**'s **{$idLabel} number**?\n"
                     .'*(numbers only, e.g. 20241047)*',
             ];
         }
+
+        $identifier = $state['identifier'];
 
         // Check if ID is already registered in DB
         $idExists = false;
@@ -361,129 +315,67 @@ class AiChatbotController extends Controller
         }
 
         if ($idExists) {
-            $idLabel = $category === 'student' ? 'Student ID' : ($category === 'faculty' ? 'Employee ID' : 'Staff ID');
-
             return [
                 'message' => "📋 [Patient Registration]\n\n"
                     ."⚠️ The {$idLabel} **{$identifier}** is already registered to an existing patient in the database!\n\n"
-                    ."Please reply with a different {$idLabel} number (or reply **Cancel** to abort).",
+                    ."Please reply with a different {$idLabel} number for **{$fullName}** (or reply **Cancel** to abort).",
             ];
         }
 
-        // Extract Course & Year (for student) OR Position & Department (for staff/faculty)
-        $course = null;
-        $yearLevel = null;
-        $section = null;
-        $position = null;
-        $department = null;
-
+        // 4. Missing Course & Year (for student) OR Position & Department (for faculty/staff)?
         if ($category === 'student') {
-            $courses = ['BSIT', 'BSBA', 'MidWifery', 'BSHM', 'BLIS', 'BSED', 'BSCRIM'];
-            foreach ($courses as $c) {
-                if (stripos($allIntakeText, $c) !== false) {
-                    $course = $c;
-                    break;
-                }
-            }
-
-            if (preg_match('/(1st|2nd|3rd|4th|\b[1-4]\b)\s*(year)?/i', $allIntakeText, $ym)) {
-                $yNum = strtolower($ym[1]);
-                if ($yNum === '1' || $yNum === '1st') {
-                    $yearLevel = '1st Year';
-                } elseif ($yNum === '2' || $yNum === '2nd') {
-                    $yearLevel = '2nd Year';
-                } elseif ($yNum === '3' || $yNum === '3rd') {
-                    $yearLevel = '3rd Year';
-                } elseif ($yNum === '4' || $yNum === '4th') {
-                    $yearLevel = '4th Year';
-                }
-            }
-
-            if (preg_match('/\b([1-4][A-Fa-f]|section\s+[A-Fa-f])\b/i', $allIntakeText, $sm)) {
-                $section = strtoupper($sm[1]);
-            }
-
-            if (! $course || ! $yearLevel) {
+            if (empty($state['course']) || empty($state['year_level'])) {
                 return [
                     'message' => "📋 [Patient Registration]\n\n"
-                        ."Thanks! What is their **Course** and **Year Level**?\n"
+                        ."Thanks! What is **{$fullName}**'s **Course** and **Year Level**?\n"
                         ."• Courses: BSIT, BSBA, MidWifery, BSHM, BLIS, BSED, BSCRIM\n"
                         ."• Year Levels: 1st Year, 2nd Year, 3rd Year, 4th Year\n\n"
-                        .'*(e.g., BSIT 2nd Year Section 2A)*',
+                        .'*(e.g., BSIT 3rd Year Section 3B)*',
                 ];
             }
         } else {
-            // For Faculty or Staff
-            if (preg_match('/position[:\s]+([^,\n]+)/i', $allIntakeText, $pm)) {
-                $position = trim($pm[1]);
-            } elseif ($lastAssistantIntakeMsg && str_contains($lastAssistantIntakeMsg, 'Position and Department')) {
-                $position = trim($latestUserMessage);
-            }
-
-            if (preg_match('/department[:\s]+([^,\n]+)/i', $allIntakeText, $dm)) {
-                $department = trim($dm[1]);
-            }
-
-            if (! $position) {
+            if (empty($state['position'])) {
                 return [
                     'message' => "📋 [Patient Registration]\n\n"
-                        ."What is their **Position** and **Department**?\n"
+                        ."What is **{$fullName}**'s **Position** and **Department**?\n"
                         .'*(e.g., Position: Instructor I, Department: College of BSIT)*',
                 ];
             }
         }
 
-        // Extract Sex
-        $sex = null;
-        if (preg_match('/\b(female|woman|girl)\b/i', $allIntakeText)) {
-            $sex = 'Female';
-        } elseif (preg_match('/\b(male|man|boy)\b/i', $allIntakeText)) {
-            $sex = 'Male';
-        }
+        // 5. Missing Sex, Birth Date, or Contact Number?
+        if (empty($state['sex']) || empty($state['birth_date']) || empty($state['contact_number'])) {
+            $missing = [];
+            if (empty($state['sex'])) {
+                $missing[] = 'Sex';
+            }
+            if (empty($state['birth_date'])) {
+                $missing[] = 'Birth Date';
+            }
+            if (empty($state['contact_number'])) {
+                $missing[] = 'Contact Number';
+            }
 
-        // Extract Birth Date
-        $birthDate = $this->normalizeBirthDate($allIntakeText);
-
-        // Extract Contact Number
-        $contactNumber = null;
-        if (preg_match('/\b(09\d{9})\b/', $allIntakeText, $cm)) {
-            $contactNumber = $cm[1];
-        } elseif (preg_match('/\b(\d{11})\b/', $allIntakeText, $cm)) {
-            $contactNumber = $cm[1];
-        }
-
-        if (! $sex || ! $birthDate || ! $contactNumber) {
             return [
                 'message' => "📋 [Patient Registration]\n\n"
-                    ."What is their **Sex**, **Birth Date**, and **Contact Number**?\n"
-                    .'*(e.g. Female, March 03 2006, 09959048004)*',
+                    ."What is **{$fullName}**'s **".implode(', ', $missing)."**?\n"
+                    .'*(e.g. Male, March 03 2006, 09959048004)*',
             ];
         }
 
-        // Extract Address
-        $address = null;
-        if (preg_match('/address[:\s]+([^\n\r]+)/i', $allIntakeText, $am)) {
-            $address = trim($am[1]);
-        } elseif ($lastAssistantIntakeMsg && str_contains($lastAssistantIntakeMsg, 'What is their **Address**?')) {
-            $cleanAddr = trim(preg_replace('/^(it\'s|address is|address:?)\s*/i', '', $latestUserMessage));
-            if (! empty($cleanAddr)) {
-                $address = $cleanAddr;
-            }
-        }
-
-        if (! $address) {
+        // 6. Missing Address?
+        if (empty($state['address'])) {
             return [
                 'message' => "📋 [Patient Registration]\n\n"
-                    ."Almost finished! What is their **Address**?\n"
+                    ."Almost finished! What is **{$fullName}**'s **Address**?\n"
                     .'*(e.g. Taguig City or Napocor Natumolan 20B)*',
             ];
         }
 
-        // All information is complete! Present review summary
-        $catLabel = ucfirst($category);
+        // 7. Everything is complete! Show review confirmation card
         $roleDetails = $category === 'student'
-            ? "• **Course & Year**: {$course} - {$yearLevel}".($section ? " ({$section})" : '')
-            : "• **Position & Dept**: {$position}".($department ? " - {$department}" : '');
+            ? "• **Course & Year**: {$state['course']} - {$state['year_level']}".($state['section'] ? " ({$state['section']})" : '')
+            : "• **Position & Dept**: {$state['position']}".($state['department'] ? " - {$state['department']}" : '');
 
         return [
             'message' => "📋 [Patient Registration]\n"
@@ -492,10 +384,10 @@ class AiChatbotController extends Controller
                 ."• **Full Name**: {$fullName}\n"
                 ."• **ID**: {$identifier}\n"
                 ."{$roleDetails}\n"
-                ."• **Sex**: {$sex}\n"
-                ."• **Birth Date**: {$birthDate}\n"
-                ."• **Contact Number**: {$contactNumber}\n"
-                ."• **Address**: {$address}\n\n"
+                ."• **Sex**: {$state['sex']}\n"
+                ."• **Birth Date**: {$state['birth_date']}\n"
+                ."• **Contact Number**: {$state['contact_number']}\n"
+                ."• **Address**: {$state['address']}\n\n"
                 ."Would you like me to record this patient now?\n"
                 .'Reply **Yes** to confirm and save, or **Cancel** to abort.',
         ];
@@ -624,38 +516,218 @@ class AiChatbotController extends Controller
         ];
     }
 
-    private function extractPatientName(array $messages, ?string $lastAssistantMsg, string $allIntakeText): array
+    private function extractIntakeState(array $messages): array
     {
-        // Explicit "Name: ..."
-        if (preg_match('/(?:full\s*name|name)[:\s]+([a-zA-Z\sñÑ\-.\']+)/i', $allIntakeText, $nm)) {
-            $parsed = $this->parseName($nm[1]);
-            if (! empty($parsed['first_name'])) {
-                $full = trim($parsed['first_name'].' '.($parsed['middle_name'] ? $parsed['middle_name'].' ' : '').$parsed['last_name']);
-
-                return array_merge($parsed, ['full_name' => $full]);
-            }
-        }
-
-        // Check if last assistant message asked for Full Name
-        if ($lastAssistantMsg && (str_contains($lastAssistantMsg, "What is the patient's **Full Name**?") || str_contains($lastAssistantMsg, 'Full Name'))) {
-            $lastUserMsg = trim(end($messages)['content'] ?? '');
-            $clean = preg_replace('/^(name is|full name is|it is|it\'s)\s*/i', '', $lastUserMsg);
-            if (! preg_match('/\b(student|faculty|staff|add|cancel)\b/i', $clean) && strlen($clean) > 2) {
-                $parsed = $this->parseName($clean);
-                if (! empty($parsed['first_name'])) {
-                    $full = trim($parsed['first_name'].' '.($parsed['middle_name'] ? $parsed['middle_name'].' ' : '').$parsed['last_name']);
-
-                    return array_merge($parsed, ['full_name' => $full]);
-                }
-            }
-        }
-
-        return [
+        $state = [
+            'category' => null,
             'first_name' => '',
             'middle_name' => null,
             'last_name' => '',
             'full_name' => '',
+            'identifier' => null,
+            'course' => null,
+            'year_level' => null,
+            'section' => null,
+            'position' => null,
+            'department' => null,
+            'sex' => null,
+            'birth_date' => null,
+            'contact_number' => null,
+            'address' => null,
         ];
+
+        // First pass: inspect assistant messages to recover any confirmed data
+        foreach ($messages as $msg) {
+            if ($msg['role'] === 'model') {
+                $text = $msg['content'];
+                if (preg_match('/Got it!\s*What is \*\*([^*]+)\*\*\'s/i', $text, $m)) {
+                    $state['full_name'] = trim($m[1]);
+                } elseif (preg_match('/What is \*\*([^*]+)\*\*\'s \*\*/i', $text, $m)) {
+                    $state['full_name'] = trim($m[1]);
+                }
+                if (preg_match('/registering a \*\*(Student|Faculty|Staff)\*\*/i', $text, $m)) {
+                    $state['category'] = strtolower(trim($m[1]));
+                }
+            }
+        }
+
+        // Second pass: iterate through question -> answer pairs
+        for ($i = 0; $i < count($messages); $i++) {
+            $msg = $messages[$i];
+            if ($msg['role'] === 'model') {
+                $bot = $msg['content'];
+
+                // Find the next user message
+                $userMsg = null;
+                for ($j = $i + 1; $j < count($messages); $j++) {
+                    if ($messages[$j]['role'] === 'user') {
+                        $userMsg = trim($messages[$j]['content']);
+                        break;
+                    }
+                }
+
+                if ($userMsg === null || preg_match('/^(cancel|abort|stop)\b/i', $userMsg)) {
+                    continue;
+                }
+
+                // 1. Category question
+                if (str_contains($bot, 'What category is the patient?')) {
+                    if (preg_match('/\b(faculty|prof|instructor|teacher)\b/i', $userMsg) || preg_match('/^\s*2\b/', $userMsg)) {
+                        $state['category'] = 'faculty';
+                    } elseif (preg_match('/\b(staff|employee|non-teaching)\b/i', $userMsg) || preg_match('/^\s*3\b/', $userMsg)) {
+                        $state['category'] = 'staff';
+                    } elseif (preg_match('/\b(student|stud)\b/i', $userMsg) || preg_match('/^\s*1\b/', $userMsg)) {
+                        $state['category'] = 'student';
+                    }
+                }
+
+                // 2. Full Name question
+                if (str_contains($bot, "What is the patient's **Full Name**?") || str_contains($bot, 'Full Name')) {
+                    if (! preg_match('/\b(student|faculty|staff|add\s+new|cancel)\b/i', $userMsg) && strlen($userMsg) > 2) {
+                        $parsed = $this->parseName($userMsg);
+                        if (! empty($parsed['first_name'])) {
+                            $state['first_name'] = $parsed['first_name'];
+                            $state['middle_name'] = $parsed['middle_name'];
+                            $state['last_name'] = $parsed['last_name'];
+                            $state['full_name'] = trim($parsed['first_name'].' '.($parsed['middle_name'] ? $parsed['middle_name'].' ' : '').$parsed['last_name']);
+                        }
+                    }
+                }
+
+                // 3. ID question (or duplicate ID prompt)
+                if (str_contains($bot, 'Student ID number') || str_contains($bot, 'Employee ID number') || str_contains($bot, 'Staff ID number') || str_contains($bot, 'already registered') || str_contains($bot, 'different Student ID') || str_contains($bot, 'different Employee ID') || str_contains($bot, 'different Staff ID')) {
+                    if (preg_match('/\b(\d{7,10}|[A-Za-z0-9\-]{5,15})\b/', $userMsg, $idm)) {
+                        $state['identifier'] = $idm[1];
+                    }
+                }
+
+                // 4. Course & Year question
+                if (str_contains($bot, 'Course') && str_contains($bot, 'Year Level')) {
+                    $this->parseCourseYear($userMsg, $state);
+                }
+
+                // 5. Position & Dept question
+                if (str_contains($bot, 'Position') && str_contains($bot, 'Department')) {
+                    $parts = preg_split('/[,-]/', $userMsg);
+                    $state['position'] = trim($parts[0] ?? $userMsg);
+                    if (isset($parts[1])) {
+                        $state['department'] = trim($parts[1]);
+                    }
+                }
+
+                // 6. Sex, Birth Date, and Contact Number question
+                if (str_contains($bot, 'Sex') || str_contains($bot, 'Birth Date') || str_contains($bot, 'Contact Number')) {
+                    $this->parseSexBirthContact($userMsg, $state);
+                }
+
+                // 7. Address question
+                if ((str_contains($bot, 'What is **') && str_contains($bot, 'Address')) || str_contains($bot, 'What is their **Address**?')) {
+                    $cleanAddr = trim(preg_replace('/^(it\'s|address is|address:?)\s*/i', '', $userMsg));
+                    if (! empty($cleanAddr) && ! in_array(strtolower($cleanAddr), ['yes', 'no', 'cancel'], true)) {
+                        $state['address'] = $cleanAddr;
+                    }
+                }
+            }
+        }
+
+        // Third pass: backfill any still-missing fields from any user message
+        foreach ($messages as $msg) {
+            if ($msg['role'] === 'user') {
+                $u = $msg['content'];
+                if (empty($state['category'])) {
+                    if (preg_match('/\b(faculty|prof|instructor)\b/i', $u)) {
+                        $state['category'] = 'faculty';
+                    } elseif (preg_match('/\b(staff|employee)\b/i', $u)) {
+                        $state['category'] = 'staff';
+                    } elseif (preg_match('/\b(student)\b/i', $u)) {
+                        $state['category'] = 'student';
+                    }
+                }
+
+                if (empty($state['full_name']) && preg_match('/(?:full\s*name|name)[:\s]+([a-zA-Z\sñÑ\-.\']+)/i', $u, $nm)) {
+                    $parsed = $this->parseName($nm[1]);
+                    if (! empty($parsed['first_name'])) {
+                        $state['first_name'] = $parsed['first_name'];
+                        $state['middle_name'] = $parsed['middle_name'];
+                        $state['last_name'] = $parsed['last_name'];
+                        $state['full_name'] = trim($parsed['first_name'].' '.($parsed['middle_name'] ? $parsed['middle_name'].' ' : '').$parsed['last_name']);
+                    }
+                }
+
+                if (empty($state['identifier']) && preg_match('/\b(20\d{6,10})\b/', $u, $idm)) {
+                    $state['identifier'] = $idm[1];
+                }
+
+                if (empty($state['course']) || empty($state['year_level'])) {
+                    $this->parseCourseYear($u, $state);
+                }
+
+                if (empty($state['sex']) || empty($state['birth_date']) || empty($state['contact_number'])) {
+                    $this->parseSexBirthContact($u, $state);
+                }
+            }
+        }
+
+        // Ensure name components exist if full_name is set
+        if (! empty($state['full_name']) && empty($state['first_name'])) {
+            $parsed = $this->parseName($state['full_name']);
+            $state['first_name'] = $parsed['first_name'];
+            $state['middle_name'] = $parsed['middle_name'];
+            $state['last_name'] = $parsed['last_name'];
+        }
+
+        return $state;
+    }
+
+    private function parseCourseYear(string $text, array &$state): void
+    {
+        $courses = ['BSIT', 'BSBA', 'MidWifery', 'BSHM', 'BLIS', 'BSED', 'BSCRIM'];
+        foreach ($courses as $c) {
+            if (stripos($text, $c) !== false) {
+                $state['course'] = $c;
+                break;
+            }
+        }
+
+        if (preg_match('/\b(1st|2nd|3rd|4th|[1-4])\s*(?:year)?\b/i', $text, $ym)) {
+            $yNum = strtolower($ym[1]);
+            if ($yNum === '1' || $yNum === '1st') {
+                $state['year_level'] = '1st Year';
+            } elseif ($yNum === '2' || $yNum === '2nd') {
+                $state['year_level'] = '2nd Year';
+            } elseif ($yNum === '3' || $yNum === '3rd') {
+                $state['year_level'] = '3rd Year';
+            } elseif ($yNum === '4' || $yNum === '4th') {
+                $state['year_level'] = '4th Year';
+            }
+        }
+
+        if (preg_match('/\b([1-4][A-Za-z]|section\s+[A-Za-z0-9]+)\b/i', $text, $sm)) {
+            $sec = strtoupper($sm[1]);
+            if (! in_array($sec, ['BSIT', 'BSBA', 'BSHM', 'BLIS', 'BSED', 'BSCRIM', '1ST', '2ND', '3RD', '4TH', 'YEAR'], true)) {
+                $state['section'] = $sec;
+            }
+        }
+    }
+
+    private function parseSexBirthContact(string $text, array &$state): void
+    {
+        if (preg_match('/\b(female|woman|girl)\b/i', $text)) {
+            $state['sex'] = 'Female';
+        } elseif (preg_match('/\b(male|man|boy)\b/i', $text)) {
+            $state['sex'] = 'Male';
+        }
+
+        if (preg_match('/\b(09\d{9})\b/', $text, $cm)) {
+            $state['contact_number'] = $cm[1];
+        } elseif (preg_match('/\b(\d{11})\b/', $text, $cm)) {
+            $state['contact_number'] = $cm[1];
+        }
+
+        $bd = $this->normalizeBirthDate($text);
+        if ($bd) {
+            $state['birth_date'] = $bd;
+        }
     }
 
     private function parseName(string $raw): array
