@@ -35,10 +35,7 @@ class DashboardController extends Controller
 
         $monthlyVisits = ClinicVisit::query()
             ->where('visit_date', '>=', $monthStart)
-            ->selectRaw("{$monthExpr} as month,
-                COUNT(*) as total,
-                SUM(CASE WHEN student_id IS NOT NULL THEN 1 ELSE 0 END) as students,
-                SUM(CASE WHEN faculty_id IS NOT NULL OR staff_id IS NOT NULL THEN 1 ELSE 0 END) as employees")
+            ->selectRaw("{$monthExpr} as month, COUNT(*) as total")
             ->groupBy('month')
             ->orderBy('month')
             ->get();
