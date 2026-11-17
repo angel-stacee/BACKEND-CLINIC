@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Staff;
+use App\Models\Student;
+use App\Models\Faculty;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class StaffController extends Controller
 {
@@ -75,7 +78,23 @@ class StaffController extends Controller
             'birth_date' => 'required|date',
             'contact_number' => 'required|string|max:20',
             'address' => 'required|string|max:255',
+        ], [
+            'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
         ]);
+
+        $staffId = trim($validated['staff_id']);
+        if ($student = Student::where('student_id', $staffId)->first()) {
+            $name = trim("{$student->first_name} {$student->last_name}");
+            throw ValidationException::withMessages([
+                'staff_id' => ["The ID '{$staffId}' is already in use by student {$name}. Please enter a different ID."],
+            ]);
+        }
+        if ($faculty = Faculty::where('employee_id', $staffId)->first()) {
+            $name = trim("{$faculty->first_name} {$faculty->last_name}");
+            throw ValidationException::withMessages([
+                'staff_id' => ["The ID '{$staffId}' is already in use by faculty member {$name}. Please enter a different ID."],
+            ]);
+        }
 
         $staff = Staff::create($validated);
 
@@ -102,7 +121,23 @@ class StaffController extends Controller
             'birth_date' => 'required|date',
             'contact_number' => 'required|string|max:20',
             'address' => 'required|string|max:255',
+        ], [
+            'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
         ]);
+
+        $staffId = trim($validated['staff_id']);
+        if ($student = Student::where('student_id', $staffId)->first()) {
+            $name = trim("{$student->first_name} {$student->last_name}");
+            throw ValidationException::withMessages([
+                'staff_id' => ["The ID '{$staffId}' is already in use by student {$name}. Please enter a different ID."],
+            ]);
+        }
+        if ($faculty = Faculty::where('employee_id', $staffId)->first()) {
+            $name = trim("{$faculty->first_name} {$faculty->last_name}");
+            throw ValidationException::withMessages([
+                'staff_id' => ["The ID '{$staffId}' is already in use by faculty member {$name}. Please enter a different ID."],
+            ]);
+        }
 
         $staff->update($validated);
 
