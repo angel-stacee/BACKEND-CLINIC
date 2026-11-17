@@ -52,6 +52,26 @@ class DashboardController extends Controller
             ->orderBy('date')
             ->get();
 
+        $visitReasons = ClinicVisit::query()
+            ->select(['id', 'reason', 'symptoms'])
+            ->get()
+            ->groupBy(function ($v) {
+                $reason = trim((string) ($v->reason ?? ''));
+                $symptoms = trim((string) ($v->symptoms ?? ''));
+                if (strtolower($reason) === 'other' && $symptoms !== '') {
+                    return $symptoms;
+                }
+
+                return $reason !== '' ? $reason : 'Other';
+            })
+            ->map(fn ($group, $name) => [
+                'label' => $name,
+                'value' => $group->count(),
+            ])
+            ->sortByDesc('value')
+            ->values()
+            ->take(6);
+
         $recentStudents = Student::query()
             ->select([
                 'id',
@@ -165,6 +185,7 @@ class DashboardController extends Controller
             ],
             'monthly_visits' => $monthlyVisits,
             'visit_trends' => $visitTrends,
+            'visit_reasons' => $visitReasons,
             'recent_students' => $recentPatients,
             'recent_patients' => $recentPatients,
             'recent_visits' => ClinicVisit::query()
