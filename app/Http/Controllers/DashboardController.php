@@ -36,6 +36,18 @@ class DashboardController extends Controller
             ->orderBy('month')
             ->get();
 
+        $dailyStart = now()->subDays(90)->toDateString();
+        $dateExpr = $isSqlite ? "strftime('%Y-%m-%d', visit_date)" : "DATE_FORMAT(visit_date, '%Y-%m-%d')";
+        $visitTrends = ClinicVisit::query()
+            ->where('visit_date', '>=', $dailyStart)
+            ->selectRaw("{$dateExpr} as date,
+                COUNT(*) as total,
+                SUM(CASE WHEN student_id IS NOT NULL THEN 1 ELSE 0 END) as students,
+                SUM(CASE WHEN faculty_id IS NOT NULL OR staff_id IS NOT NULL THEN 1 ELSE 0 END) as employees")
+            ->groupBy('date')
+            ->orderBy('date')
+            ->get();
+
         $recentStudents = Student::query()
             ->select([
                 'id',
@@ -143,6 +155,7 @@ class DashboardController extends Controller
                 'female' => $femaleCount,
             ],
             'monthly_visits' => $monthlyVisits,
+            'visit_trends' => $visitTrends,
             'recent_students' => $recentPatients,
             'recent_patients' => $recentPatients,
             'recent_visits' => ClinicVisit::query()
