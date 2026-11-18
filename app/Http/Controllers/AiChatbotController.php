@@ -720,8 +720,6 @@ class AiChatbotController extends Controller
 
         if (preg_match('/\b(09\d{9})\b/', $text, $cm)) {
             $state['contact_number'] = $cm[1];
-        } elseif (preg_match('/\b(\d{11})\b/', $text, $cm)) {
-            $state['contact_number'] = $cm[1];
         }
 
         $bd = $this->normalizeBirthDate($text);

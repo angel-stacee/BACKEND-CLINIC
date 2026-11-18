@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Student;
-use App\Models\Staff;
 use App\Models\Faculty;
-use Illuminate\Http\Request;
+use App\Models\Staff;
+use App\Models\Student;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class StudentController extends Controller
@@ -26,12 +26,13 @@ class StudentController extends Controller
 
         // Check students
         $studentQuery = Student::where('student_id', $id);
-        if ($category === 'student' && !empty($excludeId)) {
+        if ($category === 'student' && ! empty($excludeId)) {
             $studentQuery->where('id', '!=', $excludeId);
         }
         $existingStudent = $studentQuery->first();
         if ($existingStudent) {
             $name = trim("{$existingStudent->first_name} {$existingStudent->last_name}");
+
             return response()->json([
                 'available' => false,
                 'category' => 'student',
@@ -42,12 +43,13 @@ class StudentController extends Controller
 
         // Check staff
         $staffQuery = Staff::where('staff_id', $id);
-        if ($category === 'staff' && !empty($excludeId)) {
+        if ($category === 'staff' && ! empty($excludeId)) {
             $staffQuery->where('id', '!=', $excludeId);
         }
         $existingStaff = $staffQuery->first();
         if ($existingStaff) {
             $name = trim("{$existingStaff->first_name} {$existingStaff->last_name}");
+
             return response()->json([
                 'available' => false,
                 'category' => 'staff',
@@ -58,12 +60,13 @@ class StudentController extends Controller
 
         // Check faculty
         $facultyQuery = Faculty::where('employee_id', $id);
-        if ($category === 'faculty' && !empty($excludeId)) {
+        if ($category === 'faculty' && ! empty($excludeId)) {
             $facultyQuery->where('id', '!=', $excludeId);
         }
         $existingFaculty = $facultyQuery->first();
         if ($existingFaculty) {
             $name = trim("{$existingFaculty->first_name} {$existingFaculty->last_name}");
+
             return response()->json([
                 'available' => false,
                 'category' => 'faculty',
@@ -76,6 +79,7 @@ class StudentController extends Controller
             'available' => true,
         ]);
     }
+
     public function index(Request $request)
     {
         $validated = $request->validate([
@@ -155,10 +159,11 @@ class StudentController extends Controller
             'section' => 'nullable|string|max:255',
             'sex' => 'required|string|max:50',
             'birth_date' => 'required|date',
-            'contact_number' => 'required|string|max:50',
+            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'required|string',
         ], [
             'student_id.unique' => "Student ID ':input' is already in use by an existing student. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $studentId = trim($validated['student_id']);
@@ -190,7 +195,7 @@ class StudentController extends Controller
     public function update(Request $request, Student $student)
     {
         $validated = $request->validate([
-            'student_id' => 'required|string|max:255|unique:students,student_id,' . $student->id,
+            'student_id' => 'required|string|max:255|unique:students,student_id,'.$student->id,
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -199,10 +204,11 @@ class StudentController extends Controller
             'section' => 'nullable|string|max:255',
             'sex' => 'required|string|max:50',
             'birth_date' => 'required|date',
-            'contact_number' => 'required|string|max:50',
+            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'required|string',
         ], [
             'student_id.unique' => "Student ID ':input' is already in use by an existing student. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $studentId = trim($validated['student_id']);
@@ -229,7 +235,7 @@ class StudentController extends Controller
         $student->delete();
 
         return response()->json([
-            'message' => 'Student deleted successfully.'
+            'message' => 'Student deleted successfully.',
         ]);
     }
 }

@@ -186,4 +186,37 @@ class SearchPatientTest extends TestCase
         $response->assertOk();
         $response->assertJsonCount(1, 'data');
     }
+
+    public function test_contact_number_must_start_with_09_and_have_11_digits(): void
+    {
+        // 1. Invalid number (starts with 2, like 21213213213)
+        $invalidRes = $this->postJson('/api/students', [
+            'student_id' => '20249999',
+            'first_name' => 'Test',
+            'last_name' => 'Student',
+            'course' => 'BSIT',
+            'year_level' => '1st Year',
+            'sex' => 'Male',
+            'birth_date' => '2000-01-01',
+            'contact_number' => '21213213213',
+            'address' => 'Sample Address',
+        ]);
+        $invalidRes->assertStatus(422);
+        $invalidRes->assertJsonValidationErrors(['contact_number']);
+
+        // 2. Valid number starting with 09 and 11 digits
+        $validRes = $this->postJson('/api/students', [
+            'student_id' => '20249999',
+            'first_name' => 'Test',
+            'last_name' => 'Student',
+            'course' => 'BSIT',
+            'year_level' => '1st Year',
+            'sex' => 'Male',
+            'birth_date' => '2000-01-01',
+            'contact_number' => '09532812400',
+            'address' => 'Sample Address',
+        ]);
+        $validRes->assertStatus(201);
+        $this->assertEquals('09532812400', $validRes->json('contact_number'));
+    }
 }

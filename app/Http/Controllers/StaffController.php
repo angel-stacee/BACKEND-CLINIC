@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Faculty;
 use App\Models\Staff;
 use App\Models\Student;
-use App\Models\Faculty;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -76,10 +76,11 @@ class StaffController extends Controller
             'department' => 'nullable|string|max:255',
             'sex' => 'required|in:Male,Female',
             'birth_date' => 'required|date',
-            'contact_number' => 'required|string|max:20',
+            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'required|string|max:255',
         ], [
             'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $staffId = trim($validated['staff_id']);
@@ -111,7 +112,7 @@ class StaffController extends Controller
         Staff $staff
     ) {
         $validated = $request->validate([
-            'staff_id' => 'required|string|max:255|unique:staff,staff_id,' . $staff->id,
+            'staff_id' => 'required|string|max:255|unique:staff,staff_id,'.$staff->id,
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -119,10 +120,11 @@ class StaffController extends Controller
             'department' => 'nullable|string|max:255',
             'sex' => 'required|in:Male,Female',
             'birth_date' => 'required|date',
-            'contact_number' => 'required|string|max:20',
+            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'required|string|max:255',
         ], [
             'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $staffId = trim($validated['staff_id']);
@@ -149,8 +151,7 @@ class StaffController extends Controller
         $staff->delete();
 
         return response()->json([
-            'message' =>
-                'Staff/Faculty deleted successfully',
+            'message' => 'Staff/Faculty deleted successfully',
         ]);
     }
 }

@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Faculty;
-use App\Models\Student;
 use App\Models\Staff;
+use App\Models\Student;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -76,10 +76,11 @@ class FacultyController extends Controller
             'department' => 'nullable|string|max:255',
             'sex' => 'nullable|string|max:50',
             'birth_date' => 'nullable|date',
-            'contact_number' => 'nullable|string|max:255',
+            'contact_number' => ['nullable', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'nullable|string|max:255',
         ], [
             'employee_id.unique' => "Faculty ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $employeeId = trim($validated['employee_id']);
@@ -109,7 +110,7 @@ class FacultyController extends Controller
     public function update(Request $request, Faculty $faculty)
     {
         $validated = $request->validate([
-            'employee_id' => 'required|string|max:255|unique:faculties,employee_id,' . $faculty->id,
+            'employee_id' => 'required|string|max:255|unique:faculties,employee_id,'.$faculty->id,
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -117,10 +118,11 @@ class FacultyController extends Controller
             'department' => 'nullable|string|max:255',
             'sex' => 'nullable|string|max:50',
             'birth_date' => 'nullable|date',
-            'contact_number' => 'nullable|string|max:255',
+            'contact_number' => ['nullable', 'string', 'regex:/^09\d{9}$/'],
             'address' => 'nullable|string|max:255',
         ], [
             'employee_id.unique' => "Faculty ID ':input' is already in use by an existing faculty member. Please enter a different ID.",
+            'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
 
         $employeeId = trim($validated['employee_id']);
@@ -147,7 +149,7 @@ class FacultyController extends Controller
         $faculty->delete();
 
         return response()->json([
-            'message' => 'Faculty deleted successfully.'
+            'message' => 'Faculty deleted successfully.',
         ]);
     }
 }
