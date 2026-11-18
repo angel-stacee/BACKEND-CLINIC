@@ -1,4 +1,3 @@
-
 FROM php:8.2-cli
 
 RUN apt-get update && apt-get install -y \
@@ -25,10 +24,12 @@ WORKDIR /var/www
 
 COPY . .
 
+RUN rm -f .env
+
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-RUN chmod -R 775 storage bootstrap/cache && chmod +x entrypoint.sh
+RUN chmod -R 775 storage bootstrap/cache
 
 EXPOSE 8080
 
-CMD ["sh", "/var/www/entrypoint.sh"]
+CMD php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
