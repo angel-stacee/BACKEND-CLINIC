@@ -7,11 +7,25 @@ use App\Models\Faculty;
 use App\Models\Medicine;
 use App\Models\Staff;
 use App\Models\Student;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
     public function index()
+    {
+        if (app()->environment('testing')) {
+            return response()->json($this->buildDashboardData());
+        }
+
+        $data = Cache::remember('clinic_dashboard_data', 15, function () {
+            return $this->buildDashboardData();
+        });
+
+        return response()->json($data);
+    }
+
+    protected function buildDashboardData(): array
     {
         $totalStudents = Student::count();
         $totalStaff = Staff::count();
@@ -159,7 +173,7 @@ class DashboardController extends Controller
             ->limit(10)
             ->get();
 
-        return response()->json([
+        return [
             'total_students' => $totalStudents,
             'total_patients' => $totalStudents + $totalStaff + $totalFaculty,
             'total_visits' => $totalVisits,
@@ -207,6 +221,6 @@ class DashboardController extends Controller
                 ->latest('id')
                 ->limit(5)
                 ->get(),
-        ]);
+        ];
     }
 }
