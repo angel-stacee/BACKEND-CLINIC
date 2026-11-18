@@ -1,4 +1,5 @@
 *.sql
+!database/seeders/clinic_backup.sql
 *.log
 .DS_Store
 .env
