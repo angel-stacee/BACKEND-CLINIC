@@ -11,6 +11,7 @@ class ClinicVisit extends Model
         'faculty_id',
         'staff_id',
         'nurse_id',
+        'department',
         'visit_date',
         'reason',
         'symptoms',

@@ -23,13 +23,14 @@ class ReportController extends Controller
 
         $visits = ClinicVisit::query()
             ->select([
-                'id', 'student_id', 'faculty_id', 'staff_id', 'nurse_id',
+                'id', 'student_id', 'faculty_id', 'staff_id', 'nurse_id', 'department',
                 'medicine_id', 'medicine_quantity', 'visit_date', 'reason', 'symptoms',
+                'temperature', 'blood_pressure',
             ])
             ->with([
-                'student:id,first_name,middle_name,last_name',
-                'faculty:id,first_name,middle_name,last_name',
-                'staff:id,first_name,middle_name,last_name',
+                'student:id,student_id,first_name,middle_name,last_name,course,year_level,section',
+                'faculty:id,employee_id,first_name,middle_name,last_name,department,position',
+                'staff:id,staff_id,first_name,middle_name,last_name,department,position',
                 'nurse:id,name',
                 'medicine:id,medicine_name,unit',
             ])
@@ -45,6 +46,12 @@ class ReportController extends Controller
 
         $studentVisits = $visits
             ->whereNotNull('student_id')
+            ->count();
+
+        $studentsTreated = $visits
+            ->whereNotNull('student_id')
+            ->pluck('student_id')
+            ->unique()
             ->count();
 
         $facultyVisits = $visits
@@ -71,6 +78,22 @@ class ReportController extends Controller
             })
             ->sortByDesc('count')
             ->values();
+
+        $commonIllnesses = $visits
+            ->filter(fn ($v) => ! empty(trim($v->symptoms ?? '')))
+            ->flatMap(function ($v) {
+                return preg_split('/[,;\/]+/', (string) $v->symptoms);
+            })
+            ->map(fn ($s) => trim((string) $s))
+            ->filter(fn ($s) => $s !== '' && strlen($s) > 2)
+            ->groupBy(fn ($s) => ucwords(strtolower($s)))
+            ->map(fn ($group, $illness) => [
+                'illness' => $illness,
+                'count' => $group->count(),
+            ])
+            ->sortByDesc('count')
+            ->values()
+            ->take(10);
 
         $medicineUsage = $visits
             ->filter(function ($visit) {
@@ -172,6 +195,17 @@ class ReportController extends Controller
                 $displayReason = trim($visit->symptoms);
             }
 
+            $dept = $visit->department;
+            if (! $dept) {
+                if ($visit->faculty && ! empty($visit->faculty->department)) {
+                    $dept = $visit->faculty->department;
+                } elseif ($visit->staff && ! empty($visit->staff->department)) {
+                    $dept = $visit->staff->department;
+                } elseif ($visit->student && ! empty($visit->student->course)) {
+                    $dept = $this->mapCourseToDepartment($visit->student->course);
+                }
+            }
+
             return [
                 'id' => $visit->id,
 
@@ -183,9 +217,15 @@ class ReportController extends Controller
 
                 'person_type' => $personType,
 
+                'department' => $dept ?: 'N/A',
+
                 'reason' => $displayReason,
 
                 'symptoms' => $visit->symptoms,
+
+                'temperature' => $visit->temperature,
+
+                'blood_pressure' => $visit->blood_pressure,
 
                 'medicine' => $visit->medicine?->medicine_name,
 
@@ -209,11 +249,14 @@ class ReportController extends Controller
             'summary' => [
                 'total_visits' => $totalVisits,
                 'student_visits' => $studentVisits,
+                'students_treated' => $studentsTreated,
                 'faculty_visits' => $facultyVisits,
                 'staff_visits' => $staffVisits,
             ],
 
             'reasons' => $reasons,
+
+            'common_illnesses' => $commonIllnesses,
 
             'medicine_usage' => $medicineUsage,
 
@@ -244,5 +287,20 @@ class ReportController extends Controller
             ->implode(' ');
 
         return $name ?: $fallback;
+    }
+
+    private function mapCourseToDepartment(string $course): string
+    {
+        $c = strtoupper(trim($course));
+        return match ($c) {
+            'BSIT' => 'College of Information Technology (BSIT)',
+            'BSBA' => 'College of Business Administration (BSBA)',
+            'BSHM' => 'College of Hospitality Management (BSHM)',
+            'BSED' => 'College of Education (BSED)',
+            'BSCRIM' => 'College of Criminal Justice Education (BSCRIM)',
+            'MIDWIFERY' => 'College of Nursing & Midwifery',
+            'BLIS' => 'Department of Library and Information Science (BLIS)',
+            default => $course,
+        };
     }
 }

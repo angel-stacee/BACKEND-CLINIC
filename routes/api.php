@@ -71,6 +71,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/clinic-visit-options', [ClinicVisitController::class, 'options']);
     Route::get('/patients/check-id', [StudentController::class, 'checkId']);
+    Route::get('/students/{student}/medical-history', [StudentController::class, 'medicalHistory']);
     Route::apiResource('students', StudentController::class);
     Route::apiResource('staff', StaffController::class);
     Route::apiResource('faculties', FacultyController::class);

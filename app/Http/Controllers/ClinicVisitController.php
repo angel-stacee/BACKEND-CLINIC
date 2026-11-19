@@ -34,6 +34,7 @@ class ClinicVisitController extends Controller
                 'faculty_id',
                 'staff_id',
                 'nurse_id',
+                'department',
                 'medicine_id',
                 'medicine_quantity',
                 'visit_date',
@@ -48,9 +49,9 @@ class ClinicVisitController extends Controller
                 'updated_at',
             ])
             ->with([
-                'student:id,student_id,first_name,middle_name,last_name',
-                'faculty:id,employee_id,first_name,middle_name,last_name',
-                'staff:id,staff_id,first_name,middle_name,last_name',
+                'student:id,student_id,first_name,middle_name,last_name,course,year_level,section',
+                'faculty:id,employee_id,first_name,middle_name,last_name,department,position',
+                'staff:id,staff_id,first_name,middle_name,last_name,department,position',
                 'nurse:id,name,email,role',
                 'medicine:id,medicine_name,unit',
             ])
@@ -73,6 +74,7 @@ class ClinicVisitController extends Controller
                         ->orWhere('assessment', 'like', $contains)
                         ->orWhere('treatment', 'like', $contains)
                         ->orWhere('remarks', 'like', $contains)
+                        ->orWhere('department', 'like', $contains)
                         ->orWhere('visit_date', 'like', $contains)
                         ->when($dateSearch, fn (Builder $dateQuery, string $date) => $dateQuery->orWhereDate('visit_date', $date))
                         ->orWhereRaw('CAST(medicine_quantity AS CHAR) LIKE ?', [$contains])
@@ -226,6 +228,12 @@ class ClinicVisitController extends Controller
                 'min:1',
             ],
 
+            'department' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
             'remarks' => [
                 'nullable',
                 'string',
@@ -261,6 +269,9 @@ class ClinicVisitController extends Controller
         $validated = $this->normalizeMedicineData($validated);
 
         $this->validateNurse($validated['nurse_id']);
+
+        $validated['temperature'] = $this->normalizeTemperature($validated['temperature'] ?? null);
+        $validated['department'] = $this->resolveDepartment($validated);
 
         $visit = DB::transaction(function () use ($validated) {
 
@@ -401,6 +412,12 @@ class ClinicVisitController extends Controller
                 'min:1',
             ],
 
+            'department' => [
+                'nullable',
+                'string',
+                'max:255',
+            ],
+
             'remarks' => [
                 'nullable',
                 'string',
@@ -436,6 +453,9 @@ class ClinicVisitController extends Controller
         $validated = $this->normalizeMedicineData($validated);
 
         $this->validateNurse($validated['nurse_id']);
+
+        $validated['temperature'] = $this->normalizeTemperature($validated['temperature'] ?? null);
+        $validated['department'] = $this->resolveDepartment($validated);
 
         DB::transaction(function () use (
             $validated,
@@ -816,5 +836,77 @@ class ClinicVisitController extends Controller
         }
 
         return response()->json($payload);
+    }
+
+    private function normalizeTemperature(?string $temp): ?string
+    {
+        if ($temp === null) {
+            return null;
+        }
+
+        $trimmed = trim($temp);
+        if ($trimmed === '' || $trimmed === '-') {
+            return null;
+        }
+
+        // Check if Fahrenheit indicated by 'f' or '°f' or value > 50 without 'c'
+        $isFahrenheit = preg_match('/f/i', $trimmed) || (! preg_match('/c/i', $trimmed) && (float) preg_replace('/[^0-9.]/', '', $trimmed) > 50);
+
+        // Extract numeric part
+        if (preg_match('/(\d+(?:\.\d+)?)/', $trimmed, $matches)) {
+            $val = (float) $matches[1];
+            if ($isFahrenheit) {
+                $val = ($val - 32) * (5 / 9);
+            }
+            return number_format(round($val, 1), 1, '.', '');
+        }
+
+        return $trimmed;
+    }
+
+    private function resolveDepartment(array $validated): ?string
+    {
+        $dept = trim($validated['department'] ?? '');
+        if ($dept !== '') {
+            return $dept;
+        }
+
+        if (! empty($validated['faculty_id'])) {
+            $faculty = Faculty::find($validated['faculty_id']);
+            if ($faculty && ! empty($faculty->department)) {
+                return trim($faculty->department);
+            }
+        }
+
+        if (! empty($validated['staff_id'])) {
+            $staff = Staff::find($validated['staff_id']);
+            if ($staff && ! empty($staff->department)) {
+                return trim($staff->department);
+            }
+        }
+
+        if (! empty($validated['student_id'])) {
+            $student = Student::find($validated['student_id']);
+            if ($student && ! empty($student->course)) {
+                return $this->mapCourseToDepartment($student->course);
+            }
+        }
+
+        return null;
+    }
+
+    private function mapCourseToDepartment(string $course): string
+    {
+        $c = strtoupper(trim($course));
+        return match ($c) {
+            'BSIT' => 'College of Information Technology (BSIT)',
+            'BSBA' => 'College of Business Administration (BSBA)',
+            'BSHM' => 'College of Hospitality Management (BSHM)',
+            'BSED' => 'College of Education (BSED)',
+            'BSCRIM' => 'College of Criminal Justice Education (BSCRIM)',
+            'MIDWIFERY' => 'College of Nursing & Midwifery',
+            'BLIS' => 'Department of Library and Information Science (BLIS)',
+            default => $course,
+        };
     }
 }

@@ -238,4 +238,64 @@ class StudentController extends Controller
             'message' => 'Student deleted successfully.',
         ]);
     }
+
+    public function medicalHistory(Student $student)
+    {
+        $visits = $student->clinicVisits()
+            ->with(['nurse:id,name', 'medicine:id,medicine_name,unit'])
+            ->orderBy('visit_date', 'desc')
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $courseDepartment = match (strtoupper(trim($student->course ?? ''))) {
+            'BSIT' => 'College of Information Technology (BSIT)',
+            'BSBA' => 'College of Business Administration (BSBA)',
+            'BSHM' => 'College of Hospitality Management (BSHM)',
+            'BSED' => 'College of Education (BSED)',
+            'BSCRIM' => 'College of Criminal Justice Education (BSCRIM)',
+            'MIDWIFERY' => 'College of Nursing & Midwifery',
+            'BLIS' => 'Department of Library and Information Science (BLIS)',
+            default => $student->course ?? 'N/A',
+        };
+
+        return response()->json([
+            'student' => [
+                'id' => $student->id,
+                'student_id' => $student->student_id,
+                'first_name' => $student->first_name,
+                'middle_name' => $student->middle_name,
+                'last_name' => $student->last_name,
+                'full_name' => trim("{$student->first_name} {$student->middle_name} {$student->last_name}"),
+                'course' => $student->course,
+                'year_level' => $student->year_level,
+                'section' => $student->section,
+                'department' => $courseDepartment,
+                'sex' => $student->sex,
+                'birth_date' => $student->birth_date,
+                'contact_number' => $student->contact_number,
+                'address' => $student->address,
+            ],
+            'total_visits' => $visits->count(),
+            'generated_at' => now()->toIso8601String(),
+            'visits' => $visits->map(function ($visit) use ($courseDepartment) {
+                return [
+                    'id' => $visit->id,
+                    'visit_date' => $visit->visit_date ? substr((string) $visit->visit_date, 0, 10) : null,
+                    'reason' => $visit->reason,
+                    'symptoms' => $visit->symptoms,
+                    'temperature' => $visit->temperature,
+                    'blood_pressure' => $visit->blood_pressure,
+                    'assessment' => $visit->assessment,
+                    'treatment' => $visit->treatment,
+                    'department' => $visit->department ?: $courseDepartment,
+                    'medicine_id' => $visit->medicine_id,
+                    'medicine_name' => $visit->medicine?->medicine_name,
+                    'medicine_unit' => $visit->medicine?->unit,
+                    'medicine_quantity' => $visit->medicine_quantity,
+                    'nurse_name' => $visit->nurse?->name,
+                    'remarks' => $visit->remarks,
+                ];
+            }),
+        ]);
+    }
 }
