@@ -724,7 +724,7 @@ class ClinicVisitController extends Controller
 
         if (! $request->has('medicine_search')) {
             $payload['students'] = Student::query()
-                ->select(['id', 'student_id', 'first_name', 'middle_name', 'last_name'])
+                ->select(['id', 'student_id', 'first_name', 'middle_name', 'last_name', 'course'])
                 ->when($patientSearch !== '', function (Builder $query) use ($patientSearch, $patientTokens) {
                     $contains = '%'.$patientSearch.'%';
                     $query->where(function (Builder $subQuery) use ($contains, $patientTokens) {
@@ -754,7 +754,7 @@ class ClinicVisitController extends Controller
                 ->get();
 
             $payload['staff'] = Staff::query()
-                ->select(['id', 'staff_id', 'first_name', 'middle_name', 'last_name'])
+                ->select(['id', 'staff_id', 'first_name', 'middle_name', 'last_name', 'department'])
                 ->when($patientSearch !== '', function (Builder $query) use ($patientSearch, $patientTokens) {
                     $contains = '%'.$patientSearch.'%';
                     $query->where(function (Builder $subQuery) use ($contains, $patientTokens) {
@@ -784,7 +784,7 @@ class ClinicVisitController extends Controller
                 ->get();
 
             $payload['faculties'] = Faculty::query()
-                ->select(['id', 'employee_id', 'first_name', 'middle_name', 'last_name'])
+                ->select(['id', 'employee_id', 'first_name', 'middle_name', 'last_name', 'department'])
                 ->when($patientSearch !== '', function (Builder $query) use ($patientSearch, $patientTokens) {
                     $contains = '%'.$patientSearch.'%';
                     $query->where(function (Builder $subQuery) use ($contains, $patientTokens) {
