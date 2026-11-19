@@ -341,7 +341,7 @@ class AiChatbotController extends Controller
             return [
                 'message' => "📋 [Patient Registration]\n\n"
                     ."Almost finished! What is **{$fullName}**'s **Address**?\n"
-                    .'*(e.g. Taguig City or Napocor Natumolan 20B)*',
+                    .'*(e.g. Baluarte, Tagoloan or Napocor Natumolan 20B)*',
             ];
         }
 
@@ -386,7 +386,7 @@ class AiChatbotController extends Controller
         $sex = trim(strip_tags($sexM[1] ?? 'Female'));
         $birthDate = trim(strip_tags($bdM[1] ?? '2005-01-01'));
         $contactNumber = trim(strip_tags($cnM[1] ?? '09123456789'));
-        $address = trim(strip_tags($addrM[1] ?? 'Taguig City'));
+        $address = trim(strip_tags($addrM[1] ?? 'Baluarte, Tagoloan, Misamis Oriental'));
 
         $nameParts = $this->parseName($fullName);
 
