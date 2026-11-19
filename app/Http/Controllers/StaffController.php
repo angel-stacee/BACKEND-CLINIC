@@ -154,4 +154,55 @@ class StaffController extends Controller
             'message' => 'Staff/Faculty deleted successfully',
         ]);
     }
+
+    public function medicalHistory(Staff $staff)
+    {
+        $visits = $staff->clinicVisits()
+            ->with(['nurse:id,name', 'medicine:id,medicine_name,unit'])
+            ->orderBy('visit_date', 'desc')
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $staffData = [
+            'id' => $staff->id,
+            'staff_id' => $staff->staff_id,
+            'patient_id' => $staff->staff_id,
+            'first_name' => $staff->first_name,
+            'middle_name' => $staff->middle_name,
+            'last_name' => $staff->last_name,
+            'full_name' => trim("{$staff->first_name} {$staff->middle_name} {$staff->last_name}"),
+            'position' => $staff->position,
+            'department' => $staff->department ?? 'N/A',
+            'sex' => $staff->sex,
+            'birth_date' => $staff->birth_date,
+            'contact_number' => $staff->contact_number,
+            'address' => $staff->address,
+        ];
+
+        return response()->json([
+            'patient_type' => 'staff',
+            'staff' => $staffData,
+            'patient' => $staffData,
+            'total_visits' => $visits->count(),
+            'generated_at' => now()->toIso8601String(),
+            'visits' => $visits->map(function ($visit) use ($staff) {
+                return [
+                    'id' => $visit->id,
+                    'visit_date' => $visit->visit_date,
+                    'reason' => $visit->reason,
+                    'symptoms' => $visit->symptoms,
+                    'temperature' => $visit->temperature,
+                    'blood_pressure' => $visit->blood_pressure,
+                    'assessment' => $visit->assessment,
+                    'treatment' => $visit->treatment,
+                    'remarks' => $visit->remarks,
+                    'department' => $staff->department ?? 'N/A',
+                    'nurse' => $visit->nurse ? $visit->nurse->name : 'N/A',
+                    'medicine_name' => $visit->medicine ? $visit->medicine->medicine_name : null,
+                    'medicine_unit' => $visit->medicine ? $visit->medicine->unit : null,
+                    'medicine_quantity' => $visit->medicine_quantity,
+                ];
+            }),
+        ]);
+    }
 }

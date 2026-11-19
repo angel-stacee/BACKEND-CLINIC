@@ -219,4 +219,63 @@ class SearchPatientTest extends TestCase
         $validRes->assertStatus(201);
         $this->assertEquals('09532812400', $validRes->json('contact_number'));
     }
+
+    public function test_faculty_and_staff_medical_history_endpoints(): void
+    {
+        $faculty = Faculty::create([
+            'employee_id' => 'FAC-2024-001',
+            'first_name' => 'John',
+            'last_name' => 'Faculty',
+            'position' => 'Instructor II',
+            'department' => 'Guidance & Counseling Center',
+            'sex' => 'Male',
+            'birth_date' => '1985-04-12',
+            'contact_number' => '09123456780',
+            'address' => 'Tagoloan',
+        ]);
+
+        $staff = Staff::create([
+            'staff_id' => 'STF-2024-001',
+            'first_name' => 'Jane',
+            'last_name' => 'Staff',
+            'position' => 'Administrative Assistant',
+            'department' => 'Registrar Office',
+            'sex' => 'Female',
+            'birth_date' => '1990-08-20',
+            'contact_number' => '09123456781',
+            'address' => 'Baluarte, Tagoloan',
+        ]);
+
+        ClinicVisit::create([
+            'faculty_id' => $faculty->id,
+            'visit_date' => now()->toDateString(),
+            'reason' => 'Headache',
+            'symptoms' => 'Throbbing pain',
+            'temperature' => 37.2,
+            'blood_pressure' => '120/80',
+            'treatment' => 'Rest and paracetamol',
+        ]);
+
+        ClinicVisit::create([
+            'staff_id' => $staff->id,
+            'visit_date' => now()->toDateString(),
+            'reason' => 'Fever',
+            'symptoms' => 'High body temperature',
+            'temperature' => 38.5,
+            'blood_pressure' => '110/70',
+            'treatment' => 'Hydration and rest',
+        ]);
+
+        $facultyRes = $this->getJson("/api/faculties/{$faculty->id}/medical-history");
+        $facultyRes->assertOk();
+        $facultyRes->assertJsonPath('patient_type', 'faculty');
+        $facultyRes->assertJsonPath('total_visits', 1);
+        $facultyRes->assertJsonPath('patient.employee_id', 'FAC-2024-001');
+
+        $staffRes = $this->getJson("/api/staff/{$staff->id}/medical-history");
+        $staffRes->assertOk();
+        $staffRes->assertJsonPath('patient_type', 'staff');
+        $staffRes->assertJsonPath('total_visits', 1);
+        $staffRes->assertJsonPath('patient.staff_id', 'STF-2024-001');
+    }
 }

@@ -258,23 +258,28 @@ class StudentController extends Controller
             default => $student->course ?? 'N/A',
         };
 
+        $studentData = [
+            'id' => $student->id,
+            'student_id' => $student->student_id,
+            'patient_id' => $student->student_id,
+            'first_name' => $student->first_name,
+            'middle_name' => $student->middle_name,
+            'last_name' => $student->last_name,
+            'full_name' => trim("{$student->first_name} {$student->middle_name} {$student->last_name}"),
+            'course' => $student->course,
+            'year_level' => $student->year_level,
+            'section' => $student->section,
+            'department' => $courseDepartment,
+            'sex' => $student->sex,
+            'birth_date' => $student->birth_date,
+            'contact_number' => $student->contact_number,
+            'address' => $student->address,
+        ];
+
         return response()->json([
-            'student' => [
-                'id' => $student->id,
-                'student_id' => $student->student_id,
-                'first_name' => $student->first_name,
-                'middle_name' => $student->middle_name,
-                'last_name' => $student->last_name,
-                'full_name' => trim("{$student->first_name} {$student->middle_name} {$student->last_name}"),
-                'course' => $student->course,
-                'year_level' => $student->year_level,
-                'section' => $student->section,
-                'department' => $courseDepartment,
-                'sex' => $student->sex,
-                'birth_date' => $student->birth_date,
-                'contact_number' => $student->contact_number,
-                'address' => $student->address,
-            ],
+            'patient_type' => 'student',
+            'student' => $studentData,
+            'patient' => $studentData,
             'total_visits' => $visits->count(),
             'generated_at' => now()->toIso8601String(),
             'visits' => $visits->map(function ($visit) use ($courseDepartment) {

@@ -21,4 +21,21 @@ class Staff extends Model
         'contact_number',
         'address',
     ];
+
+    protected static function booted()
+    {
+        static::saving(function ($staff) {
+            if (empty($staff->employee_id) && !empty($staff->staff_id)) {
+                $staff->employee_id = $staff->staff_id;
+            }
+            if (empty($staff->staff_id) && !empty($staff->employee_id)) {
+                $staff->staff_id = $staff->employee_id;
+            }
+        });
+    }
+
+    public function clinicVisits()
+    {
+        return $this->hasMany(ClinicVisit::class);
+    }
 }
