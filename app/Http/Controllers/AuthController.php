@@ -225,9 +225,22 @@ class AuthController extends Controller
 
         $fromAddress = config('mail.from.address');
         if (! $fromAddress || $fromAddress === 'null' || $fromAddress === 'hello@example.com') {
-            $fromAddress = config('mail.mailers.smtp.username') ?: 'no-reply@tcc.edu.ph';
+            $fromAddress = env('MAIL_FROM_ADDRESS') ?: config('mail.mailers.smtp.username') ?: env('MAIL_USERNAME') ?: 'repohive@gmail.com';
         }
-        $fromName = config('mail.from.name') ?: 'TCC Clinic Management System';
+        $fromName = config('mail.from.name') ?: env('MAIL_FROM_NAME') ?: 'TCC CLINIC';
+
+        if ((config('mail.default') === 'log' || ! config('mail.default')) && ! env('BREVO_API_KEY') && ! env('RESEND_API_KEY')) {
+            config([
+                'mail.default' => 'smtp',
+                'mail.mailers.smtp.host' => env('MAIL_HOST') ?: 'smtp.gmail.com',
+                'mail.mailers.smtp.port' => (int) (env('MAIL_PORT') ?: 587),
+                'mail.mailers.smtp.encryption' => env('MAIL_ENCRYPTION') ?: 'tls',
+                'mail.mailers.smtp.username' => env('MAIL_USERNAME') ?: 'repohive@gmail.com',
+                'mail.mailers.smtp.password' => env('MAIL_PASSWORD') ?: 'yujpqejfsfyllahb',
+                'mail.from.address' => $fromAddress,
+                'mail.from.name' => $fromName,
+            ]);
+        }
 
         $htmlBody = '
         <div style="font-family: Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #e8dfd4; border-radius: 12px; background-color: #ffffff;">
@@ -300,18 +313,14 @@ class AuthController extends Controller
             }
 
             return response()->json([
-                'message' => "A 6-digit OTP code has been generated. Your verification code is: {$otp} (or backup: 123456).",
-                'otp' => $otp,
-                'dev_otp' => $otp,
+                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your Gmail inbox.",
             ]);
         } catch (\Throwable $e) {
             $rawError = $e->getMessage();
             Log::info("Mail delivery note for {$user->email}: ".$rawError);
 
             return response()->json([
-                'message' => "Verification code generated: {$otp} (or backup: 123456).",
-                'otp' => $otp,
-                'dev_otp' => $otp,
+                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your Gmail inbox.",
             ]);
         }
     }
