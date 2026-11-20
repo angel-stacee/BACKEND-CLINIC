@@ -10,7 +10,6 @@ class Staff extends Model
 
     protected $fillable = [
         'staff_id',
-        'employee_id',
         'first_name',
         'middle_name',
         'last_name',
@@ -22,16 +21,20 @@ class Staff extends Model
         'address',
     ];
 
-    protected static function booted()
+    protected $appends = [
+        'employee_id',
+    ];
+
+    public function getEmployeeIdAttribute()
     {
-        static::saving(function ($staff) {
-            if (empty($staff->employee_id) && !empty($staff->staff_id)) {
-                $staff->employee_id = $staff->staff_id;
-            }
-            if (empty($staff->staff_id) && !empty($staff->employee_id)) {
-                $staff->staff_id = $staff->employee_id;
-            }
-        });
+        return $this->attributes['staff_id'] ?? null;
+    }
+
+    public function setEmployeeIdAttribute($value)
+    {
+        if (empty($this->attributes['staff_id']) && !empty($value)) {
+            $this->attributes['staff_id'] = $value;
+        }
     }
 
     public function clinicVisits()

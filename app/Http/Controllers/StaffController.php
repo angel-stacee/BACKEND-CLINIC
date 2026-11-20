@@ -74,14 +74,19 @@ class StaffController extends Controller
             'last_name' => 'required|string|max:255',
             'position' => 'required|string|max:255',
             'department' => 'nullable|string|max:255',
-            'sex' => 'required|in:Male,Female',
-            'birth_date' => 'required|date',
-            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
-            'address' => 'required|string|max:255',
+            'sex' => 'nullable|string|max:50',
+            'birth_date' => 'nullable|date',
+            'contact_number' => ['nullable', 'string', 'regex:/^09\d{9}$/'],
+            'address' => 'nullable|string|max:255',
         ], [
             'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
             'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
+
+        $validated['sex'] = !empty($validated['sex']) ? $validated['sex'] : 'Male';
+        $validated['birth_date'] = !empty($validated['birth_date']) ? $validated['birth_date'] : '2000-01-01';
+        $validated['contact_number'] = !empty($validated['contact_number']) ? $validated['contact_number'] : '09000000000';
+        $validated['address'] = !empty($validated['address']) ? $validated['address'] : 'Tagoloan, Misamis Oriental';
 
         $staffId = trim($validated['staff_id']);
         if ($student = Student::where('student_id', $staffId)->first()) {
@@ -118,14 +123,27 @@ class StaffController extends Controller
             'last_name' => 'required|string|max:255',
             'position' => 'required|string|max:255',
             'department' => 'nullable|string|max:255',
-            'sex' => 'required|in:Male,Female',
-            'birth_date' => 'required|date',
-            'contact_number' => ['required', 'string', 'regex:/^09\d{9}$/'],
-            'address' => 'required|string|max:255',
+            'sex' => 'nullable|string|max:50',
+            'birth_date' => 'nullable|date',
+            'contact_number' => ['nullable', 'string', 'regex:/^09\d{9}$/'],
+            'address' => 'nullable|string|max:255',
         ], [
             'staff_id.unique' => "Staff ID ':input' is already in use by an existing staff member. Please enter a different ID.",
             'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
+
+        if (array_key_exists('sex', $validated) && empty($validated['sex'])) {
+            $validated['sex'] = $staff->sex ?: 'Male';
+        }
+        if (array_key_exists('birth_date', $validated) && empty($validated['birth_date'])) {
+            $validated['birth_date'] = $staff->birth_date ?: '2000-01-01';
+        }
+        if (array_key_exists('contact_number', $validated) && empty($validated['contact_number'])) {
+            $validated['contact_number'] = $staff->contact_number ?: '09000000000';
+        }
+        if (array_key_exists('address', $validated) && empty($validated['address'])) {
+            $validated['address'] = $staff->address ?: 'Tagoloan, Misamis Oriental';
+        }
 
         $staffId = trim($validated['staff_id']);
         if ($student = Student::where('student_id', $staffId)->first()) {
