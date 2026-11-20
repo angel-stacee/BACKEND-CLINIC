@@ -17,6 +17,27 @@ if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php'))
     require $maintenance;
 }
 
+// Auto-extract vendor.zip if vendor/autoload.php is missing
+$zipCandidates = [
+    __DIR__ . '/../vendor.zip',
+    __DIR__ . '/vendor.zip',
+    dirname(__DIR__) . '/vendor.zip',
+];
+$targetVendor = __DIR__ . '/../vendor/autoload.php';
+
+if (!file_exists($targetVendor)) {
+    foreach ($zipCandidates as $zipCandidate) {
+        if (file_exists($zipCandidate) && class_exists('ZipArchive')) {
+            $zip = new ZipArchive();
+            if ($zip->open($zipCandidate) === true) {
+                $zip->extractTo(dirname($zipCandidate));
+                $zip->close();
+                break;
+            }
+        }
+    }
+}
+
 $vendorPaths = [
     __DIR__ . '/../vendor/autoload.php',
     __DIR__ . '/../vendor/vendor/autoload.php',
