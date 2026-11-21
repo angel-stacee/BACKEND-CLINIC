@@ -20,7 +20,7 @@
 /public/storage
 /storage/*.key
 /storage/pail
-/vendor
+vendor/laravel/pint/builds
 vendor.zip
 Homestead.json
 Homestead.yaml
