@@ -3,7 +3,12 @@
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return view('welcome');
+    return response()->json([
+        'status' => 'online',
+        'service' => 'TCC Clinic Management System API',
+        'version' => '1.0.0',
+        'timestamp' => now()->toIso8601String(),
+    ]);
 });
 
 Route::get('/login', function () {
