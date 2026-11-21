@@ -7,6 +7,7 @@ use App\Models\Staff;
 use App\Models\Student;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class StudentController extends Controller
@@ -150,7 +151,12 @@ class StudentController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'student_id' => 'required|string|max:255|unique:students,student_id',
+            'student_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('students', 'student_id')->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -195,7 +201,12 @@ class StudentController extends Controller
     public function update(Request $request, Student $student)
     {
         $validated = $request->validate([
-            'student_id' => 'required|string|max:255|unique:students,student_id,'.$student->id,
+            'student_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('students', 'student_id')->ignore($student->id)->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -235,7 +246,47 @@ class StudentController extends Controller
         $student->delete();
 
         return response()->json([
-            'message' => 'Student deleted successfully.',
+            'message' => 'Student record moved to trash.',
+            'id' => $student->id,
+        ]);
+    }
+
+    public function trashed(Request $request)
+    {
+        $search = trim((string) $request->get('search', ''));
+        $query = Student::onlyTrashed();
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('student_id', 'like', "%{$search}%")
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('course', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min(100, (int) $request->get('per_page', 10)));
+        return response()->json($query->orderByDesc('deleted_at')->paginate($perPage));
+    }
+
+    public function restore($id)
+    {
+        $student = Student::onlyTrashed()->findOrFail($id);
+        $student->restore();
+
+        return response()->json([
+            'message' => 'Student record restored successfully.',
+            'student' => $student,
+        ]);
+    }
+
+    public function forceDelete($id)
+    {
+        $student = Student::onlyTrashed()->findOrFail($id);
+        $student->forceDelete();
+
+        return response()->json([
+            'message' => 'Student record permanently deleted.',
         ]);
     }
 

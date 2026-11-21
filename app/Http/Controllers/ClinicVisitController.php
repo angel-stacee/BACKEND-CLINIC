@@ -620,7 +620,88 @@ class ClinicVisitController extends Controller
         );
 
         return response()->json([
-            'message' => 'Clinic visit deleted successfully.',
+            'message' => 'Clinic visit moved to trash.',
+            'id' => $clinicVisit->id,
+        ]);
+    }
+
+    public function trashed(Request $request)
+    {
+        $search = trim((string) $request->get('search', ''));
+        $query = ClinicVisit::onlyTrashed()
+            ->with([
+                'student:id,student_id,first_name,middle_name,last_name,course,year_level,section',
+                'faculty:id,employee_id,first_name,middle_name,last_name,department,position',
+                'staff:id,staff_id,first_name,middle_name,last_name,department,position',
+                'nurse:id,name',
+                'medicine:id,medicine_name,unit',
+            ]);
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('reason', 'like', "%{$search}%")
+                    ->orWhere('symptoms', 'like', "%{$search}%")
+                    ->orWhere('treatment', 'like', "%{$search}%")
+                    ->orWhereHas('student', function ($sq) use ($search) {
+                        $sq->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('student_id', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('staff', function ($sq) use ($search) {
+                        $sq->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('staff_id', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('faculty', function ($sq) use ($search) {
+                        $sq->where('first_name', 'like', "%{$search}%")
+                            ->orWhere('last_name', 'like', "%{$search}%")
+                            ->orWhere('employee_id', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        $perPage = max(1, min(100, (int) $request->get('per_page', 10)));
+        return response()->json($query->orderByDesc('deleted_at')->paginate($perPage));
+    }
+
+    public function restore($id)
+    {
+        $visit = ClinicVisit::onlyTrashed()->findOrFail($id);
+
+        DB::transaction(function () use ($visit) {
+            $medicineId = $visit->medicine_id;
+            $quantity = (int) ($visit->medicine_quantity ?? 0);
+
+            if ($medicineId && $quantity > 0) {
+                $medicine = Medicine::where('id', $medicineId)->lockForUpdate()->first();
+                if ($medicine) {
+                    $medicine->stock = max(0, (int) $medicine->stock - $quantity);
+                    $medicine->save();
+                }
+            }
+
+            $visit->restore();
+        });
+
+        return response()->json([
+            'message' => 'Clinic visit restored successfully.',
+            'clinic_visit' => $visit->load([
+                'student:id,student_id,first_name,middle_name,last_name,course,year_level,section',
+                'faculty:id,employee_id,first_name,middle_name,last_name,department,position',
+                'staff:id,staff_id,first_name,middle_name,last_name,department,position',
+                'nurse:id,name',
+                'medicine:id,medicine_name,unit',
+            ]),
+        ]);
+    }
+
+    public function forceDelete($id)
+    {
+        $visit = ClinicVisit::onlyTrashed()->findOrFail($id);
+        $visit->forceDelete();
+
+        return response()->json([
+            'message' => 'Clinic visit permanently deleted.',
         ]);
     }
 

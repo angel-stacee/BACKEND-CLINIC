@@ -7,6 +7,7 @@ use App\Models\Staff;
 use App\Models\Student;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class FacultyController extends Controller
@@ -68,7 +69,12 @@ class FacultyController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'employee_id' => 'required|string|max:255|unique:faculties,employee_id',
+            'employee_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('faculties', 'employee_id')->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -110,7 +116,12 @@ class FacultyController extends Controller
     public function update(Request $request, Faculty $faculty)
     {
         $validated = $request->validate([
-            'employee_id' => 'required|string|max:255|unique:faculties,employee_id,'.$faculty->id,
+            'employee_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('faculties', 'employee_id')->ignore($faculty->id)->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -149,7 +160,48 @@ class FacultyController extends Controller
         $faculty->delete();
 
         return response()->json([
-            'message' => 'Faculty deleted successfully.',
+            'message' => 'Faculty record moved to trash.',
+            'id' => $faculty->id,
+        ]);
+    }
+
+    public function trashed(Request $request)
+    {
+        $search = trim((string) $request->get('search', ''));
+        $query = Faculty::onlyTrashed();
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('employee_id', 'like', "%{$search}%")
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('position', 'like', "%{$search}%")
+                    ->orWhere('department', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min(100, (int) $request->get('per_page', 10)));
+        return response()->json($query->orderByDesc('deleted_at')->paginate($perPage));
+    }
+
+    public function restore($id)
+    {
+        $faculty = Faculty::onlyTrashed()->findOrFail($id);
+        $faculty->restore();
+
+        return response()->json([
+            'message' => 'Faculty record restored successfully.',
+            'faculty' => $faculty,
+        ]);
+    }
+
+    public function forceDelete($id)
+    {
+        $faculty = Faculty::onlyTrashed()->findOrFail($id);
+        $faculty->forceDelete();
+
+        return response()->json([
+            'message' => 'Faculty record permanently deleted.',
         ]);
     }
 

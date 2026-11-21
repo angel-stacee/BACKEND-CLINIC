@@ -74,11 +74,33 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/students/{student}/medical-history', [StudentController::class, 'medicalHistory']);
     Route::get('/staff/{staff}/medical-history', [StaffController::class, 'medicalHistory']);
     Route::get('/faculties/{faculty}/medical-history', [FacultyController::class, 'medicalHistory']);
+
+    // Trash & Restore routes (must be placed before apiResource to avoid route collision)
+    Route::get('/students/trashed', [StudentController::class, 'trashed']);
+    Route::post('/students/{id}/restore', [StudentController::class, 'restore']);
+    Route::delete('/students/{id}/force', [StudentController::class, 'forceDelete']);
+
+    Route::get('/staff/trashed', [StaffController::class, 'trashed']);
+    Route::post('/staff/{id}/restore', [StaffController::class, 'restore']);
+    Route::delete('/staff/{id}/force', [StaffController::class, 'forceDelete']);
+
+    Route::get('/faculties/trashed', [FacultyController::class, 'trashed']);
+    Route::post('/faculties/{id}/restore', [FacultyController::class, 'restore']);
+    Route::delete('/faculties/{id}/force', [FacultyController::class, 'forceDelete']);
+
+    Route::get('/clinic-visits/trashed', [ClinicVisitController::class, 'trashed']);
+    Route::post('/clinic-visits/{id}/restore', [ClinicVisitController::class, 'restore']);
+    Route::delete('/clinic-visits/{id}/force', [ClinicVisitController::class, 'forceDelete']);
+
     Route::apiResource('students', StudentController::class);
     Route::apiResource('staff', StaffController::class);
     Route::apiResource('faculties', FacultyController::class);
     Route::apiResource('clinic-visits', ClinicVisitController::class);
     Route::get('/nurses', [ClinicVisitController::class, 'nurses']);
+    Route::get('/medicines/trashed', [MedicineController::class, 'trashed']);
+    Route::post('/medicines/{id}/restore', [MedicineController::class, 'restore']);
+    Route::delete('/medicines/{id}/force', [MedicineController::class, 'forceDelete']);
+
     Route::apiResource('medicines', MedicineController::class);
     Route::post('/ai-chat', [AiChatbotController::class, 'chat']);
     Route::get('/reports/monthly', [ReportController::class, 'monthly']);

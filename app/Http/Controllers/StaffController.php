@@ -7,6 +7,7 @@ use App\Models\Staff;
 use App\Models\Student;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class StaffController extends Controller
@@ -68,7 +69,12 @@ class StaffController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'staff_id' => 'required|string|max:255|unique:staff,staff_id',
+            'staff_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('staff', 'staff_id')->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -87,6 +93,7 @@ class StaffController extends Controller
         $validated['birth_date'] = !empty($validated['birth_date']) ? $validated['birth_date'] : '2000-01-01';
         $validated['contact_number'] = !empty($validated['contact_number']) ? $validated['contact_number'] : '09000000000';
         $validated['address'] = !empty($validated['address']) ? $validated['address'] : 'Tagoloan, Misamis Oriental';
+        $validated['employee_id'] = $validated['staff_id'];
 
         $staffId = trim($validated['staff_id']);
         if ($student = Student::where('student_id', $staffId)->first()) {
@@ -117,7 +124,12 @@ class StaffController extends Controller
         Staff $staff
     ) {
         $validated = $request->validate([
-            'staff_id' => 'required|string|max:255|unique:staff,staff_id,'.$staff->id,
+            'staff_id' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('staff', 'staff_id')->ignore($staff->id)->whereNull('deleted_at'),
+            ],
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
             'last_name' => 'required|string|max:255',
@@ -144,6 +156,7 @@ class StaffController extends Controller
         if (array_key_exists('address', $validated) && empty($validated['address'])) {
             $validated['address'] = $staff->address ?: 'Tagoloan, Misamis Oriental';
         }
+        $validated['employee_id'] = $validated['staff_id'];
 
         $staffId = trim($validated['staff_id']);
         if ($student = Student::where('student_id', $staffId)->first()) {
@@ -169,7 +182,48 @@ class StaffController extends Controller
         $staff->delete();
 
         return response()->json([
-            'message' => 'Staff/Faculty deleted successfully',
+            'message' => 'Staff record moved to trash.',
+            'id' => $staff->id,
+        ]);
+    }
+
+    public function trashed(Request $request)
+    {
+        $search = trim((string) $request->get('search', ''));
+        $query = Staff::onlyTrashed();
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('staff_id', 'like', "%{$search}%")
+                    ->orWhere('first_name', 'like', "%{$search}%")
+                    ->orWhere('last_name', 'like', "%{$search}%")
+                    ->orWhere('position', 'like', "%{$search}%")
+                    ->orWhere('department', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min(100, (int) $request->get('per_page', 10)));
+        return response()->json($query->orderByDesc('deleted_at')->paginate($perPage));
+    }
+
+    public function restore($id)
+    {
+        $staff = Staff::onlyTrashed()->findOrFail($id);
+        $staff->restore();
+
+        return response()->json([
+            'message' => 'Staff record restored successfully.',
+            'staff' => $staff,
+        ]);
+    }
+
+    public function forceDelete($id)
+    {
+        $staff = Staff::onlyTrashed()->findOrFail($id);
+        $staff->forceDelete();
+
+        return response()->json([
+            'message' => 'Staff record permanently deleted.',
         ]);
     }
 

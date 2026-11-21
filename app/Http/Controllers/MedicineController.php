@@ -176,7 +176,47 @@ class MedicineController extends Controller
         $medicine->delete();
 
         return response()->json([
-            'message' => 'Medicine deleted successfully.',
+            'message' => 'Medicine record moved to trash.',
+            'id' => $medicine->id,
+        ]);
+    }
+
+    public function trashed(Request $request)
+    {
+        $search = trim((string) $request->get('search', ''));
+        $query = Medicine::onlyTrashed();
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('medicine_name', 'like', "%{$search}%")
+                    ->orWhere('treatment_type', 'like', "%{$search}%")
+                    ->orWhere('unit', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(1, min(100, (int) $request->get('per_page', 10)));
+        return response()->json($query->orderByDesc('deleted_at')->paginate($perPage));
+    }
+
+    public function restore($id)
+    {
+        $medicine = Medicine::onlyTrashed()->findOrFail($id);
+        $medicine->restore();
+
+        return response()->json([
+            'message' => 'Medicine record restored successfully.',
+            'medicine' => $medicine,
+        ]);
+    }
+
+    public function forceDelete($id)
+    {
+        $medicine = Medicine::withTrashed()->findOrFail($id);
+        $medicine->forceDelete();
+
+        return response()->json([
+            'message' => 'Medicine permanently deleted.',
         ]);
     }
 }
