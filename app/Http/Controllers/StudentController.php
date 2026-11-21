@@ -154,6 +154,7 @@ class StudentController extends Controller
             'student_id' => [
                 'required',
                 'string',
+                'starts_with:20',
                 'max:8',
                 Rule::unique('students', 'student_id')->whereNull('deleted_at'),
             ],
@@ -169,6 +170,7 @@ class StudentController extends Controller
             'address' => 'required|string',
         ], [
             'student_id.unique' => "Student ID ':input' is already in use by an existing student. Please enter a different ID.",
+            'student_id.starts_with' => 'Student ID must start with 20 (e.g. 20241041).',
             'student_id.max' => 'Student ID cannot exceed 8 numbers.',
             'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
@@ -205,6 +207,7 @@ class StudentController extends Controller
             'student_id' => [
                 'required',
                 'string',
+                'starts_with:20',
                 'max:8',
                 Rule::unique('students', 'student_id')->ignore($student->id)->whereNull('deleted_at'),
             ],
@@ -220,6 +223,7 @@ class StudentController extends Controller
             'address' => 'required|string',
         ], [
             'student_id.unique' => "Student ID ':input' is already in use by an existing student. Please enter a different ID.",
+            'student_id.starts_with' => 'Student ID must start with 20 (e.g. 20241041).',
             'student_id.max' => 'Student ID cannot exceed 8 numbers.',
             'contact_number.regex' => 'Contact number must be an 11-digit number starting with 09 (e.g. 09532812400).',
         ]);
