@@ -95,8 +95,14 @@ class AiChatbotController extends Controller
             ], 422);
         }
 
+        $studentsByCourse = Student::select('course', \Illuminate\Support\Facades\DB::raw('count(*) as count'))
+            ->groupBy('course')
+            ->pluck('count', 'course')
+            ->all();
+
         $clinicSnapshot = [
             'students' => Student::count(),
+            'students_by_course' => $studentsByCourse,
             'staff' => Staff::count(),
             'faculty' => Faculty::count(),
             'clinic_visits_this_month' => ClinicVisit::query()
@@ -913,7 +919,7 @@ class AiChatbotController extends Controller
         $facts = [];
         $directReply = null;
 
-        // 1. General System Counts
+        // 1. General System Counts & Course Breakdown
         $studentCount = Student::count();
         $facultyCount = Faculty::count();
         $staffCount = Staff::count();
@@ -923,7 +929,58 @@ class AiChatbotController extends Controller
         $visitsThisMonth = ClinicVisit::whereBetween('visit_date', [now()->startOfMonth(), now()->endOfMonth()])->count();
         $totalVisitsAllTime = ClinicVisit::count();
 
-        $facts[] = "SYSTEM TOTALS: Students: {$studentCount}, Faculty: {$facultyCount}, Staff: {$staffCount}, Medicines registered: {$medicineCount} ({$lowStockCount} low stock, {$outOfStockCount} out of stock). Clinic visits this month: {$visitsThisMonth}, All-time visits: {$totalVisitsAllTime}.";
+        $studentsByCourse = Student::select('course', \Illuminate\Support\Facades\DB::raw('count(*) as count'))
+            ->groupBy('course')
+            ->pluck('count', 'course')
+            ->all();
+        $courseBreakdownStr = collect($studentsByCourse)->map(fn ($c, $k) => "{$k}: {$c}")->implode(', ');
+
+        $facts[] = "SYSTEM TOTALS: Students: {$studentCount}" . ($courseBreakdownStr ? " ({$courseBreakdownStr})" : "") . ", Faculty: {$facultyCount}, Staff: {$staffCount}, Medicines registered: {$medicineCount} ({$lowStockCount} low stock, {$outOfStockCount} out of stock). Clinic visits this month: {$visitsThisMonth}, All-time visits: {$totalVisitsAllTime}.";
+
+        // Check if user is asking about a specific academic course or student statistics
+        $recognizedCourses = [
+            'bsit' => 'BSIT',
+            'bsba' => 'BSBA',
+            'bshm' => 'BSHM',
+            'bsed' => 'BSED',
+            'bscrim' => 'BSCRIM',
+            'blis' => 'BLIS',
+            'midwifery' => 'MidWifery',
+            'nursing' => 'College of Nursing & Midwifery',
+        ];
+
+        $matchedCourseKey = null;
+        foreach ($recognizedCourses as $key => $name) {
+            if (preg_match('/\b'.preg_quote($key, '/').'\b/i', $q)) {
+                $matchedCourseKey = $key;
+                break;
+            }
+        }
+
+        if ($matchedCourseKey) {
+            $courseCode = $recognizedCourses[$matchedCourseKey];
+            $courseStudents = Student::where('course', 'like', "%{$courseCode}%")->get();
+            $count = $courseStudents->count();
+
+            $studentDetails = $courseStudents->map(
+                fn ($s) => "• **{$s->first_name} {$s->last_name}** (`{$s->student_id}`) — {$s->year_level}".($s->section ? " ({$s->section})" : "")
+            )->implode("\n");
+
+            $facts[] = "STUDENT COURSE QUERY: Total registered students in {$courseCode}: {$count}. "
+                . ($count > 0 ? "Student list: " . $courseStudents->map(fn ($s) => "{$s->first_name} {$s->last_name} (ID: {$s->student_id}, {$s->year_level})")->implode('; ') : "No students are currently registered under {$courseCode}.");
+
+            $directReply = "🎓 **{$courseCode} Students Summary**\n\n"
+                . "There " . ($count === 1 ? "is currently **1** student" : "are currently **{$count}** students")
+                . " enrolled in **{$courseCode}** registered in the clinic database.\n\n"
+                . ($count > 0 ? "{$studentDetails}\n\n" : "")
+                . "You can view complete student medical records and profiles in the **Patient Management** section.";
+        } elseif ((str_contains($q, 'total') || str_contains($q, 'how many') || str_contains($q, 'count') || str_contains($q, 'summary')) && (str_contains($q, 'student') || str_contains($q, 'course'))) {
+            $courseList = collect($studentsByCourse)->map(fn ($c, $k) => "• **{$k}**: {$c} student(s)")->implode("\n");
+            $directReply = "👥 **Student Records Summary**\n\n"
+                . "There are currently **{$studentCount}** total student(s) registered in the clinic system.\n\n"
+                . ($courseList ? "**Breakdown by Course:**\n{$courseList}\n\n" : "")
+                . "You can manage students and view their medical files under **Patient Management**.";
+        }
 
         // 2. Check for Student Queries
         // Look for ID numbers (5-15 digits) or keywords like "student", "course"
@@ -1109,7 +1166,7 @@ class AiChatbotController extends Controller
             return "Medicine Inventory Snapshot:\n• Total medicines: {$total}\n• Low stock items: {$low}\n• Out of stock items: {$out}\n\nYou can review stock levels and manage batches under the Medicine Inventory section.";
         }
 
-        if (str_contains($q, 'student')) {
+        if (str_contains($q, 'student') || str_contains($q, 'bsit') || str_contains($q, 'bsba') || str_contains($q, 'bshm') || str_contains($q, 'bsed') || str_contains($q, 'bscrim') || str_contains($q, 'blis') || str_contains($q, 'midwifery')) {
             $count = $clinicSnapshot['students'] ?? 0;
 
             return "There are currently {$count} student record(s) registered in the clinic system.";
@@ -1163,23 +1220,8 @@ class AiChatbotController extends Controller
             return true;
         }
 
-        $clinicTerms = [
-            'clinic', 'patient', 'student', 'faculty', 'staff', 'nurse',
-            'visit', 'medical record', 'record', 'medicine', 'medication',
-            'inventory', 'stock', 'prescription', 'treatment', 'first aid',
-            'health', 'symptom', 'illness', 'injury', 'fever', 'pain',
-            'emergency', 'appointment', 'dashboard', 'report', 'login',
-        ];
+        $pattern = '/\b(clinic|clinics|patient|patients|student|students|faculty|faculties|staff|staffs|nurse|nurses|doctor|doctors|visit|visits|medical\s*record|medical\s*records|record|records|medicine|medicines|medication|medications|inventory|stock|stocks|supply|supplies|prescription|prescriptions|treatment|treatments|first\s*aid|health|symptom|symptoms|illness|illnesses|injury|injuries|fever|pain|emergency|emergencies|appointment|appointments|dashboard|dashboards|report|reports|login|bsit|bsba|bshm|bsed|bscrim|blis|midwifery|nursing|course|courses|department|departments|year\s*level|section|sections|how\s+many|total\s+students?|total\s+patients?|total\s+medicines?|total\s+visits?)\b/i';
 
-        foreach ($clinicTerms as $term) {
-            if (preg_match(
-                '/(?<![\\p{L}\\p{N}])'.preg_quote($term, '/').'(?![\\p{L}\\p{N}])/u',
-                $normalized
-            )) {
-                return true;
-            }
-        }
-
-        return false;
+        return (bool) preg_match($pattern, $normalized);
     }
 }
