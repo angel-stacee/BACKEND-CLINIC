@@ -9,9 +9,26 @@ use Illuminate\Http\Request;
 
 define('LARAVEL_START', microtime(true));
 
-if (!file_exists(__DIR__ . '/../.env') && file_exists(__DIR__ . '/../.env.example')) {
-    @copy(__DIR__ . '/../.env.example', __DIR__ . '/../.env');
+if (!file_exists(__DIR__ . '/../.env')) {
+    if (file_exists(__DIR__ . '/../.env.example')) {
+        @copy(__DIR__ . '/../.env.example', __DIR__ . '/../.env');
+    }
+    if (file_exists(__DIR__ . '/../.env')) {
+        $content = file_get_contents(__DIR__ . '/../.env');
+        if (strpos($content, 'APP_KEY=base64') === false) {
+            $content = preg_replace('/^APP_KEY=.*$/m', 'APP_KEY=base64:iloJwlDVhlO5EYituRhUZIOjkNCrW3saOEqf5W4sNVU=', $content);
+            @file_put_contents(__DIR__ . '/../.env', $content);
+        }
+    } else {
+        @file_put_contents(__DIR__ . '/../.env', "APP_NAME=Laravel\nAPP_ENV=production\nAPP_KEY=base64:iloJwlDVhlO5EYituRhUZIOjkNCrW3saOEqf5W4sNVU=\nAPP_DEBUG=true\n");
+    }
 }
+
+// Ensure framework storage directories exist
+@mkdir(__DIR__ . '/../storage/framework/views', 0777, true);
+@mkdir(__DIR__ . '/../storage/framework/sessions', 0777, true);
+@mkdir(__DIR__ . '/../storage/framework/cache/data', 0777, true);
+@mkdir(__DIR__ . '/../storage/logs', 0777, true);
 
 if (file_exists($maintenance = __DIR__.'/../storage/framework/maintenance.php')) {
     require $maintenance;
