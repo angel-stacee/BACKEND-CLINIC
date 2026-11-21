@@ -240,6 +240,136 @@ class AiChatbotController extends Controller
         }
     }
 
+    public function publicChat(Request $request)
+    {
+        $request->validate([
+            'messages' => ['required', 'array', 'min:1', 'max:25'],
+            'messages.*.role' => ['required', 'in:user,model'],
+            'messages.*.content' => ['required', 'string', 'max:1500'],
+        ]);
+
+        $messages = $request->input('messages');
+        if (end($messages)['role'] !== 'user') {
+            return response()->json([
+                'message' => 'Send a question to continue the conversation.',
+            ], 422);
+        }
+
+        $latestUserMessage = trim(end($messages)['content'] ?? '');
+
+        // Medical symptom safety filter
+        $isMedicalQuery = (bool) preg_match(
+            '/\b(headache|fever|pain|cough|cold|flu|sick|ill|nausea|vomit|diarrhea|dizzy|sore throat|stomach|injury|wound|bleed|burn|allergy|asthma|prescribe|symptom)/i',
+            $latestUserMessage
+        );
+
+        if ($isMedicalQuery) {
+            return response()->json([
+                'message' => "For medical symptoms like fever, headache, body pain, wounds, or illness, please visit the **TCC Baluarte Campus Clinic** in person (Ground Floor, Beside UniFAST Building). Our registered duty healthcare professionals will assess you and provide free first-aid care and dispensary medicines.\n\n*Clinic Hours: Monday – Friday, 8:00 AM – 5:00 PM.*",
+            ]);
+        }
+
+        $systemInstruction = "You are the friendly, intelligent AI Virtual Assistant for Tagoloan Community College (TCC) Clinic Landing Page in Baluarte, Tagoloan, Misamis Oriental, Philippines.\n\n"
+            ."KEY ACCURATE CLINIC FACTS:\n"
+            ."- Location: Ground Floor, Beside UniFAST Building, Baluarte Campus, Tagoloan, Misamis Oriental, Philippines.\n"
+            ."- Operating Hours: Monday through Friday from 8:00 AM to 5:00 PM with active duty registered nurses on duty.\n"
+            ."- Cost & Eligibility: 100% Free of charge for all enrolled TCC college students, faculty, and administrative staff.\n"
+            ."- Available Clinic Services:\n"
+            ."  * Free walk-in consultations & vital sign assessments (Blood Pressure, Heart Rate, Temperature, Respiratory Rate)\n"
+            ."  * Emergency first-aid treatments and wound dressings\n"
+            ."  * Free dispensary medicines (paracetamol, analgesics, antacids, antihistamines, oral rehydration salts)\n"
+            ."  * Official Medical Certificate and Health Clearance issuance for class excuses, sports events, and OJT training\n"
+            ."  * Bed-rest observation bay\n"
+            ."- Check-In Requirements: Present your Student ID (must start with 20) or Faculty/Staff ID at the clinic triage desk.\n"
+            ."- Emergency Hospital Transfer Protocol: Clinic team provides immediate first-responder stabilization, coordinates rapid emergency transport with the Tagoloan Municipal Health Office / municipal rescue units, and notifies emergency contacts promptly.\n"
+            ."- Clinic Portal Access: Clinical staff and nurses can sign in to the digital clinic portal by clicking the 'Sign In' button at the top right of the page.\n"
+            ."- Clinic Head / Key Personnel: Dr. Kharen Jane S Ungab (College President), registered campus nurses, and medical officers.\n"
+            ."- Contact: clinic@tcc.edu.ph | president@tcc.edu.ph\n\n"
+            ."RESPONSE GUIDELINES:\n"
+            ."1. Be polite, warm, concise, and helpful with Markdown formatting (bullet points, bold highlights).\n"
+            ."2. Do NOT diagnose or prescribe medications. Advise in-person visit for health symptoms.\n"
+            ."3. Answer user questions directly based on the accurate clinic facts above.";
+
+        $contents = collect($messages)
+            ->map(function ($message) {
+                return [
+                    'role' => $message['role'],
+                    'parts' => [['text' => $message['content']]],
+                ];
+            })
+            ->values()
+            ->all();
+
+        while (! empty($contents) && $contents[0]['role'] !== 'user') {
+            array_shift($contents);
+        }
+
+        $apiKey = config('services.gemini.key');
+        $model = config('services.gemini.model', 'gemini-3.6-flash');
+        $fallbackModel = config('services.gemini.fallback_model', 'gemini-3.5-flash');
+
+        if ($apiKey) {
+            try {
+                $response = $this->gemini->generate($apiKey, $model, $systemInstruction, $contents);
+                if ($response->failed() && $fallbackModel && $fallbackModel !== $model) {
+                    $response = $this->gemini->generate($apiKey, $fallbackModel, $systemInstruction, $contents);
+                }
+                if ($response->successful()) {
+                    $parts = data_get($response->json(), 'candidates.0.content.parts', []);
+                    $message = collect($parts)->pluck('text')->filter()->implode("\n");
+                    if ($message) {
+                        return response()->json(['message' => $message]);
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Public AI chatbot gemini failure: ' . $e->getMessage());
+            }
+        }
+
+        // Offline knowledge fallback
+        $fallbackReply = $this->generatePublicOfflineReply($latestUserMessage);
+        return response()->json(['message' => $fallbackReply]);
+    }
+
+    private function generatePublicOfflineReply(string $query): string
+    {
+        $q = strtolower($query);
+
+        if (preg_match('/\b(where|location|place|building|locate|find|address)\b/i', $q)) {
+            return "📍 **Clinic Location:**\nThe TCC Clinic is located on the **Ground Floor, Beside the UniFAST Building** at Baluarte Campus, Tagoloan, Misamis Oriental.\n\nWalk-ins are welcomed during our regular operating hours!";
+        }
+
+        if (preg_match('/\b(hour|time|open|schedule|when|close)\b/i', $q)) {
+            return "🕒 **Operating Hours:**\nThe TCC Baluarte Campus Clinic is open **Monday through Friday, from 8:00 AM to 5:00 PM**, with active duty registered nurses on site throughout the day.";
+        }
+
+        if (preg_match('/\b(cost|fee|pay|free|price|charge)\b/i', $q)) {
+            return "💊 **Free Health Services:**\nYes! All medical consultations, vital sign checkups, emergency first-aid treatments, and basic dispensary medicines are **100% free of charge** for all TCC students, faculty, and administrative staff.";
+        }
+
+        if (preg_match('/\b(med\s*cert|certificate|clearance|excuse|ojt)\b/i', $q)) {
+            return "📋 **Medical Certificate & Health Clearance:**\nTo request an official Medical Certificate for class excuse, sports participation, or OJT clearance:\n1. Visit the clinic in person (Ground Floor, Beside UniFAST Building).\n2. Present your Student ID.\n3. Complete an in-person health assessment with our duty nurse.\n4. An officially signed Medical Certificate will be issued upon clearance.";
+        }
+
+        if (preg_match('/\b(emergency|urgent|ambulance|hospital|severe|accident)\b/i', $q)) {
+            return "🚨 **Emergency Protocols:**\nIn case of critical emergencies:\n1. The campus clinic team stabilizes the patient immediately.\n2. We coordinate rapid emergency transport with the **Tagoloan Municipal Health Office** and municipal rescue units.\n3. The patient's emergency contact or parents are notified immediately.";
+        }
+
+        if (preg_match('/\b(medicine|drug|pill|dispensary|stock)\b/i', $q)) {
+            return "💊 **Available Medications:**\nThe clinic maintains an active stock of essential over-the-counter medicines including analgesics/pain relievers, fever medications (paracetamol), antacids, oral rehydration salts, antihistamines, and antiseptic wound care supplies — all dispensed free of charge upon clinical evaluation.";
+        }
+
+        if (preg_match('/\b(login|sign\s*in|portal|account|access)\b/i', $q)) {
+            return "🔐 **Clinic Management Portal:**\nAuthorized clinic staff, nurses, and administrators can access the system by clicking **'Sign In'** at the top right of this page or visiting [/login](/login).";
+        }
+
+        if (preg_match('/\b(hello|hi|hey|good\s*(morning|afternoon|evening)|sup)\b/i', $q)) {
+            return "Hello! 👋 Welcome to the **Tagoloan Community College (TCC) Clinic** virtual assistant. How can I help you today? You can ask about our campus clinic location, operating hours, free medications, medical certificate procedures, or emergency protocols!";
+        }
+
+        return "Thank you for reaching out to the **TCC Clinic Assistant**! 🏥\n\n- **Location:** Ground Floor, Beside UniFAST Building, Baluarte Campus, Tagoloan\n- **Hours:** Monday to Friday, 8:00 AM – 5:00 PM\n- **Services:** Free consultations, vital sign triage, free medicines, and official Medical Certificates.\n\nFor in-person assistance, feel free to walk into the clinic or consult with our on-duty campus nurse!";
+    }
+
     private function handlePatientIntake(array $messages): ?array
     {
         $latestUserMessage = trim(end($messages)['content'] ?? '');

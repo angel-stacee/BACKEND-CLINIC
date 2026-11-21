@@ -14,6 +14,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\OrganizationController;
 
 Route::get('/organization', [OrganizationController::class, 'index']);
+Route::post('/public-ai-chat', [AiChatbotController::class, 'publicChat']);
 
 Route::get('/login', function () {
     $frontendUrl = rtrim((string) config('services.frontend.url', 'http://localhost:5173'), '/');
