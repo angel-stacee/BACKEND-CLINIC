@@ -22,8 +22,12 @@ $vendorPaths = [
     __DIR__ . '/../vendor/vendor/autoload.php',
     __DIR__ . '/vendor/autoload.php',
     __DIR__ . '/vendor/vendor/autoload.php',
+    __DIR__ . '/../backend/vendor/autoload.php',
+    __DIR__ . '/../api/vendor/autoload.php',
     __DIR__ . '/../../vendor/autoload.php',
     dirname(__DIR__) . '/vendor/autoload.php',
+    dirname(__DIR__, 2) . '/vendor/autoload.php',
+    dirname(__DIR__, 3) . '/vendor/autoload.php',
 ];
 
 $loaded = false;
