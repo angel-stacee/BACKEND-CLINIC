@@ -174,7 +174,7 @@ class StaffController extends Controller
 
         $staff->update($validated);
 
-        return response()->json($staff);
+        return response()->json($staff->fresh());
     }
 
     public function destroy(Staff $staff)

@@ -152,7 +152,7 @@ class FacultyController extends Controller
 
         $faculty->update($validated);
 
-        return response()->json($faculty);
+        return response()->json($faculty->fresh());
     }
 
     public function destroy(Faculty $faculty)
