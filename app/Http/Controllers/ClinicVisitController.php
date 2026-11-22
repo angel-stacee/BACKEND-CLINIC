@@ -292,6 +292,15 @@ class ClinicVisitController extends Controller
                     ]);
                 }
 
+                if ($medicine->expiration_date && \Carbon\Carbon::parse($medicine->expiration_date)->isPast()) {
+                    $expDate = \Carbon\Carbon::parse($medicine->expiration_date)->format('M d, Y');
+                    throw ValidationException::withMessages([
+                        'medicine_id' => [
+                            "Cannot dispense '{$medicine->medicine_name}' because it has expired on {$expDate}. Please review and remove from active inventory.",
+                        ],
+                    ]);
+                }
+
                 $quantity = (int) $validated['medicine_quantity'];
 
                 $currentStock = (int) $medicine->stock;
@@ -312,6 +321,10 @@ class ClinicVisitController extends Controller
 
             return ClinicVisit::create($validated);
         });
+
+        try {
+            app(\App\Services\NotificationService::class)->syncAll();
+        } catch (\Throwable) {}
 
         return response()->json(
             $visit->load([
@@ -897,8 +910,13 @@ class ClinicVisitController extends Controller
 
         if (! $request->has('patient_search')) {
             $payload['medicines'] = Medicine::query()
-                ->select(['id', 'medicine_name', 'treatment_type', 'unit', 'stock', 'minimum_stock'])
+                ->select(['id', 'medicine_name', 'treatment_type', 'unit', 'stock', 'minimum_stock', 'expiration_date'])
                 ->when($medicineSearch !== '', fn (Builder $query) => $query->where('medicine_name', 'like', '%'.$medicineSearch.'%'))
+                ->where(function (Builder $query) {
+                    $query->whereNull('expiration_date')
+                        ->orWhere('expiration_date', '>', \Carbon\Carbon::today()->toDateString());
+                })
+                ->where('stock', '>', 0)
                 ->orderBy('medicine_name')
                 ->limit(10)
                 ->get();

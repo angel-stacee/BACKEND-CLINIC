@@ -12,6 +12,8 @@ use App\Http\Controllers\MedicineController;
 use App\Http\Controllers\AiChatbotController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\MedicationScheduleController;
 
 Route::get('/organization', [OrganizationController::class, 'index']);
 Route::post('/public-ai-chat', [AiChatbotController::class, 'publicChat']);
@@ -112,4 +114,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/organization/members/{id}', [OrganizationController::class, 'deleteMember']);
     Route::post('/organization/reset', [OrganizationController::class, 'resetDefaults']);
     Route::put('/organization/categories/{category}', [OrganizationController::class, 'updateCategory']);
+
+    // Notifications & Real-Time Alerts
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::put('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+    Route::put('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+    Route::delete('/notifications', [NotificationController::class, 'clearAll']);
+
+    // Medication Schedules (Patient medication timing and reminders)
+    Route::apiResource('medication-schedules', MedicationScheduleController::class);
 });

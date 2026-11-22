@@ -79,7 +79,7 @@ class MedicineController extends Controller
             })
             ->latest('created_at')
             ->latest('id')
-            ->paginate($validated['per_page'] ?? 15)
+            ->paginate($validated['per_page'] ?? 10)
             ->withQueryString();
 
         if (! ($validated['include_summary'] ?? false)) {
@@ -140,6 +140,10 @@ class MedicineController extends Controller
 
         $medicine = Medicine::create($validated);
 
+        try {
+            app(\App\Services\NotificationService::class)->syncAll();
+        } catch (\Throwable) {}
+
         return response()->json([
             'message' => 'Medicine added successfully.',
             'medicine' => $medicine,
@@ -164,6 +168,10 @@ class MedicineController extends Controller
         ]);
 
         $medicine->update($validated);
+
+        try {
+            app(\App\Services\NotificationService::class)->syncAll();
+        } catch (\Throwable) {}
 
         return response()->json([
             'message' => 'Medicine updated successfully.',
