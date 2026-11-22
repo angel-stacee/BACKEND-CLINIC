@@ -30,10 +30,9 @@ class AuthController extends Controller
         // Check if user has exceeded 5 failed attempts
         if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
             $seconds = RateLimiter::availableIn($throttleKey);
-            $minutes = ceil($seconds / 60);
 
             return response()->json([
-                'message' => "Too many failed login attempts (5/5). Account temporarily locked. Please try again in {$seconds} seconds (approx. {$minutes} min) or reset your password.",
+                'message' => "Too many failed login attempts (5/5). Account temporarily locked. Please try again in {$seconds} seconds or reset your password.",
                 'locked' => true,
                 'retry_after' => $seconds,
                 'remaining_attempts' => 0,
@@ -61,16 +60,15 @@ class AuthController extends Controller
         }
 
         if (! $user || ! $isValidPassword) {
-            // Register failed attempt (locked for 300 seconds = 5 minutes upon reaching 5)
-            RateLimiter::hit($throttleKey, 300);
+            // Register failed attempt (locked for 60 seconds upon reaching 5 attempts)
+            RateLimiter::hit($throttleKey, 60);
             $remaining = RateLimiter::remaining($throttleKey, 5);
 
             if ($remaining <= 0) {
                 $seconds = RateLimiter::availableIn($throttleKey);
-                $minutes = ceil($seconds / 60);
 
                 return response()->json([
-                    'message' => "Too many failed login attempts (5/5). Account temporarily locked for {$seconds} seconds (approx. {$minutes} min). Please use Forgot Password to reset your password.",
+                    'message' => "Too many failed login attempts (5/5). Account temporarily locked for {$seconds} seconds. Please use Forgot Password to reset your password.",
                     'locked' => true,
                     'retry_after' => $seconds,
                     'remaining_attempts' => 0,
