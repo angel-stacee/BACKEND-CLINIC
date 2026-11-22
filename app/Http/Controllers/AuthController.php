@@ -378,16 +378,14 @@ class AuthController extends Controller
             }
 
             return response()->json([
-                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your inbox.",
-                'otp_preview' => $otp,
+                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your inbox (and Spam folder).",
             ]);
         } catch (\Throwable $e) {
             $rawError = $e->getMessage();
             Log::info("Mail delivery note for {$user->email}: ".$rawError);
 
             return response()->json([
-                'message' => "Verification code: {$otp} (Emergency backup code: 123456).",
-                'otp_preview' => $otp,
+                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your inbox or use staff emergency code: 123456.",
             ]);
         }
     }
