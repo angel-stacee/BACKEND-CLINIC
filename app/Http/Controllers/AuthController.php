@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -23,6 +24,21 @@ class AuthController extends Controller
         $request->validate([
             'password' => 'required',
         ]);
+
+        $throttleKey = 'login_attempt:' . Str::transliterate($loginInput . '|' . $request->ip());
+
+        // Check if user has exceeded 5 failed attempts
+        if (RateLimiter::tooManyAttempts($throttleKey, 5)) {
+            $seconds = RateLimiter::availableIn($throttleKey);
+            $minutes = ceil($seconds / 60);
+
+            return response()->json([
+                'message' => "Too many failed login attempts (5/5). Account temporarily locked. Please try again in {$seconds} seconds (approx. {$minutes} min) or reset your password.",
+                'locked' => true,
+                'retry_after' => $seconds,
+                'remaining_attempts' => 0,
+            ], 429);
+        }
 
         $user = User::query()
             ->select(['id', 'name', 'email', 'role', 'profile_picture', 'password'])
@@ -45,10 +61,30 @@ class AuthController extends Controller
         }
 
         if (! $user || ! $isValidPassword) {
+            // Register failed attempt (locked for 300 seconds = 5 minutes upon reaching 5)
+            RateLimiter::hit($throttleKey, 300);
+            $remaining = RateLimiter::remaining($throttleKey, 5);
+
+            if ($remaining <= 0) {
+                $seconds = RateLimiter::availableIn($throttleKey);
+                $minutes = ceil($seconds / 60);
+
+                return response()->json([
+                    'message' => "Too many failed login attempts (5/5). Account temporarily locked for {$seconds} seconds (approx. {$minutes} min). Please use Forgot Password to reset your password.",
+                    'locked' => true,
+                    'retry_after' => $seconds,
+                    'remaining_attempts' => 0,
+                ], 429);
+            }
+
             return response()->json([
-                'message' => 'Invalid email or password.',
+                'message' => "Invalid email or password. You have {$remaining} attempt(s) remaining.",
+                'remaining_attempts' => $remaining,
             ], 401);
         }
+
+        // On successful credentials, clear the rate limiter
+        RateLimiter::clear($throttleKey);
 
         $token = $user->createToken(
             'clinic-system-token'
