@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\ClinicVisit;
+use App\Models\Medicine;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 
@@ -10,18 +11,29 @@ class ReportController extends Controller
 {
     public function monthly(Request $request)
     {
-        $request->validate([
-            'month' => 'required|integer|min:1|max:12',
-            'year' => 'required|integer|min:2020|max:2100',
-        ]);
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $request->validate([
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+            ]);
+            $startDate = Carbon::parse($request->start_date)->startOfDay();
+            $endDate = Carbon::parse($request->end_date)->endOfDay();
+            $month = (int) $startDate->month;
+            $year = (int) $startDate->year;
+            $periodLabel = $startDate->format('M d, Y') . ' - ' . $endDate->format('M d, Y');
+        } else {
+            $request->validate([
+                'month' => 'nullable|integer|min:1|max:12',
+                'year' => 'nullable|integer|min:2020|max:2100',
+            ]);
+            $month = (int) ($request->month ?: Carbon::now()->month);
+            $year = (int) ($request->year ?: Carbon::now()->year);
+            $startDate = Carbon::create($year, $month, 1)->startOfMonth();
+            $endDate = $startDate->copy()->endOfMonth();
+            $periodLabel = $startDate->format('F Y');
+        }
 
-        $month = (int) $request->month;
-        $year = (int) $request->year;
-
-        $startDate = Carbon::create($year, $month, 1)->startOfMonth();
-        $endDate = $startDate->copy()->endOfMonth();
-
-        $visits = ClinicVisit::query()
+        $query = ClinicVisit::query()
             ->select([
                 'id', 'student_id', 'faculty_id', 'staff_id', 'nurse_id', 'department',
                 'medicine_id', 'medicine_quantity', 'visit_date', 'reason', 'symptoms',
@@ -37,8 +49,19 @@ class ReportController extends Controller
             ->whereBetween('visit_date', [
                 $startDate->toDateString(),
                 $endDate->toDateString(),
-            ])
-            ->orderBy('visit_date')
+            ]);
+
+        if ($request->filled('patient_type') && $request->patient_type !== 'all') {
+            if ($request->patient_type === 'student') {
+                $query->whereNotNull('student_id');
+            } elseif ($request->patient_type === 'faculty') {
+                $query->whereNotNull('faculty_id');
+            } elseif ($request->patient_type === 'staff') {
+                $query->whereNotNull('staff_id');
+            }
+        }
+
+        $visits = $query->orderBy('visit_date')
             ->orderBy('id')
             ->get();
 
@@ -242,7 +265,9 @@ class ReportController extends Controller
                 'month' => $month,
                 'year' => $year,
                 'month_name' => $startDate->format('F'),
-                'period' => $startDate->format('F Y'),
+                'period' => $periodLabel,
+                'start_date' => $startDate->toDateString(),
+                'end_date' => $endDate->toDateString(),
                 'generated_at' => now()->toIso8601String(),
             ],
 
@@ -265,6 +290,70 @@ class ReportController extends Controller
             'nurse_activity' => $nurseActivity,
 
             'visits' => $visitDetails,
+        ]);
+    }
+
+    public function medicineReport(Request $request)
+    {
+        $today = Carbon::today()->toDateString();
+        $in30Days = Carbon::today()->addDays(30)->toDateString();
+
+        $medicines = Medicine::query()
+            ->orderBy('medicine_name')
+            ->get();
+
+        $totalItems = $medicines->count();
+        $totalUnitsInStock = $medicines->sum('stock');
+        $outOfStock = $medicines->filter(fn($m) => $m->stock <= 0)->count();
+        $lowStock = $medicines->filter(fn($m) => $m->stock > 0 && $m->stock <= ($m->minimum_stock ?: 10))->count();
+        $expired = $medicines->filter(fn($m) => !empty($m->expiration_date) && $m->expiration_date < $today)->count();
+        $expiringSoon = $medicines->filter(fn($m) => !empty($m->expiration_date) && $m->expiration_date >= $today && $m->expiration_date <= $in30Days)->count();
+
+        // Total dispensed from clinic visits
+        $dispensedByMedicine = ClinicVisit::query()
+            ->whereNotNull('medicine_id')
+            ->selectRaw('medicine_id, SUM(medicine_quantity) as total_dispensed, COUNT(*) as visit_count')
+            ->groupBy('medicine_id')
+            ->pluck('total_dispensed', 'medicine_id');
+
+        $items = $medicines->map(function ($med) use ($today, $in30Days, $dispensedByMedicine) {
+            $dispensed = (int) ($dispensedByMedicine[$med->id] ?? 0);
+            $isExpired = !empty($med->expiration_date) && $med->expiration_date < $today;
+            $isExpiring = !empty($med->expiration_date) && $med->expiration_date >= $today && $med->expiration_date <= $in30Days;
+            $isOutOfStock = $med->stock <= 0;
+            $isLowStock = !$isOutOfStock && $med->stock <= ($med->minimum_stock ?: 10);
+
+            $status = $isExpired ? 'Expired' : ($isOutOfStock ? 'Out of Stock' : ($isLowStock ? 'Low Stock' : ($isExpiring ? 'Expiring Soon' : 'Active / Good')));
+
+            return [
+                'id' => $med->id,
+                'medicine_name' => $med->medicine_name,
+                'treatment_type' => $med->treatment_type ?: 'General',
+                'unit' => $med->unit ?: 'Unit',
+                'stock' => (int) $med->stock,
+                'minimum_stock' => (int) ($med->minimum_stock ?: 10),
+                'expiration_date' => $med->expiration_date,
+                'description' => $med->description,
+                'total_dispensed' => $dispensed,
+                'status' => $status,
+                'is_expired' => $isExpired,
+                'is_low_stock' => $isLowStock,
+                'is_out_of_stock' => $isOutOfStock,
+                'is_expiring_soon' => $isExpiring,
+            ];
+        });
+
+        return response()->json([
+            'summary' => [
+                'total_items' => $totalItems,
+                'total_units_in_stock' => $totalUnitsInStock,
+                'out_of_stock' => $outOfStock,
+                'low_stock' => $lowStock,
+                'expired' => $expired,
+                'expiring_soon' => $expiringSoon,
+            ],
+            'medicines' => $items,
+            'generated_at' => Carbon::now()->toIso8601String(),
         ]);
     }
 

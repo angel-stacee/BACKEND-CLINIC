@@ -107,6 +107,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('medicines', MedicineController::class);
     Route::post('/ai-chat', [AiChatbotController::class, 'chat']);
     Route::get('/reports/monthly', [ReportController::class, 'monthly']);
+    Route::get('/reports/medicine', [ReportController::class, 'medicineReport']);
 
     // Organization Management (Database-backed)
     Route::post('/organization/members', [OrganizationController::class, 'saveMember']);
