@@ -257,37 +257,48 @@ class AiChatbotController extends Controller
 
         $latestUserMessage = trim(end($messages)['content'] ?? '');
 
-        // Medical symptom safety filter
-        $isMedicalQuery = (bool) preg_match(
-            '/\b(headache|fever|pain|cough|cold|flu|sick|ill|nausea|vomit|diarrhea|dizzy|sore throat|stomach|injury|wound|bleed|burn|allergy|asthma|prescribe|symptom)/i',
-            $latestUserMessage
-        );
+        // 1. Strict Clinic Scope Check: Cannot answer if not related to TCC clinic
+        if (! $this->isClinicRelatedQuery($latestUserMessage)) {
+            return response()->json([
+                'message' => "I apologize, but I am specifically designed to assist with **Tagoloan Community College (TCC) Clinic** inquiries only.\n\nI can only answer questions related to:\n• **Clinic Operating Hours & Baluarte Campus Location**\n• **Free Dispensary Medicines & Medical Consultations**\n• **Vital Signs Triage & Checkups (BP, Temperature, Pulse, SpO2, BMI)**\n• **Official Medical Certificates & OJT Clearance**\n• **Emergency Protocols & Ambulance Transfer**\n• **Staff Clinic Management Portal Access**\n\nPlease feel free to ask any clinic or campus health question!",
+            ]);
+        }
 
-        if ($isMedicalQuery) {
+        // 2. Medical symptom safety filter (direct to in-person clinic triage)
+        $isMedicalSymptom = (bool) preg_match(
+            '/\b(headache|fever|high temp|severe pain|sharp pain|coughing|cold|flu|sick|ill|nausea|vomit|vomiting|diarrhea|dizzy|dizziness|faint|fainting|sore throat|stomachache|bleeding|burn|allergic reaction|asthma attack)\b/i',
+            $latestUserMessage
+        ) && ! preg_match('/\b(vital|checkup|check-up|check up|medicine|meds|hours|location|free|cost)\b/i', $latestUserMessage);
+
+        if ($isMedicalSymptom) {
             return response()->json([
                 'message' => "For medical symptoms like fever, headache, body pain, wounds, or illness, please visit the **TCC Baluarte Campus Clinic** in person (Ground Floor, Beside UniFAST Building). Our registered duty healthcare professionals will assess you and provide free first-aid care and dispensary medicines.\n\n*Clinic Hours: Monday – Friday, 8:00 AM – 5:00 PM.*",
             ]);
         }
 
         $systemInstruction = "You are the friendly, intelligent AI Virtual Assistant for Tagoloan Community College (TCC) Clinic Landing Page in Baluarte, Tagoloan, Misamis Oriental, Philippines.\n\n"
+            ."STRICT SCOPE BOUNDARY:\n"
+            ."You are EXCLUSIVELY the TCC Health Services Clinic Assistant. You are strictly forbidden from answering general knowledge, trivia, mathematics, programming/coding, creative writing, world news, politics, weather, recipes, or non-clinic topics. If a user asks anything not related to TCC Clinic or health services, politely refuse and state you only answer TCC Clinic inquiries.\n\n"
             ."KEY ACCURATE CLINIC FACTS:\n"
             ."- Location: Ground Floor, Beside UniFAST Building, Baluarte Campus, Tagoloan, Misamis Oriental, Philippines.\n"
             ."- Operating Hours: Monday through Friday from 8:00 AM to 5:00 PM with active duty registered nurses on duty.\n"
             ."- Cost & Eligibility: 100% Free of charge for all enrolled TCC college students, faculty, and administrative staff.\n"
-            ."- Available Clinic Services:\n"
-            ."  * Free walk-in consultations & vital sign assessments (Blood Pressure, Heart Rate, Temperature, Respiratory Rate)\n"
-            ."  * Emergency first-aid treatments and wound dressings\n"
-            ."  * Free dispensary medicines (paracetamol, analgesics, antacids, antihistamines, oral rehydration salts)\n"
-            ."  * Official Medical Certificate and Health Clearance issuance for class excuses, sports events, and OJT training\n"
-            ."  * Bed-rest observation bay\n"
-            ."- Check-In Requirements: Present your Student ID (must start with 20) or Faculty/Staff ID at the clinic triage desk.\n"
+            ."- Available Clinic Vital Signs & Checkups:\n"
+            ."  * Blood Pressure (BP) Monitoring (hypertension & hypotension check)\n"
+            ."  * Body Temperature screening (digital thermometer for fever/infection)\n"
+            ."  * Heart Rate / Pulse evaluation\n"
+            ."  * Oxygen Saturation (SpO2 via fingertip pulse oximeter)\n"
+            ."  * Respiratory Rate measurement (breathing check for asthma/fatigue)\n"
+            ."  * Height, Weight, and Body Mass Index (BMI) assessment\n"
+            ."  * Physical triage, minor wound assessment & dressing, and bed-rest observation bay\n"
+            ."- Free Dispensary Medicines: Paracetamol, analgesics/pain relievers, antacids, antihistamines, oral rehydration salts (ORS), and antiseptic wound care supplies.\n"
+            ."- Official Medical Certificate / Health Clearance: Issued in-person at Baluarte campus with valid Student ID for class excuse, sports clearance, or OJT.\n"
             ."- Emergency Hospital Transfer Protocol: Clinic team provides immediate first-responder stabilization, coordinates rapid emergency transport with the Tagoloan Municipal Health Office / municipal rescue units, and notifies emergency contacts promptly.\n"
-            ."- Clinic Portal Access: Clinical staff and nurses can sign in to the digital clinic portal by clicking the 'Sign In' button at the top right of the page.\n"
-            ."- Clinic Head / Key Personnel: Dr. Kharen Jane S Ungab (College President), registered campus nurses, and medical officers.\n"
+            ."- Clinic Portal Access: Clinical staff and nurses can sign in to the digital clinic portal by clicking the 'Sign In' button at the top right of the page or visiting /login.\n"
             ."- Contact: clinic@tcc.edu.ph | president@tcc.edu.ph\n\n"
             ."RESPONSE GUIDELINES:\n"
             ."1. Be polite, warm, concise, and helpful with Markdown formatting (bullet points, bold highlights).\n"
-            ."2. Do NOT diagnose or prescribe medications. Advise in-person visit for health symptoms.\n"
+            ."2. Do NOT diagnose or prescribe medications online. Advise in-person visit for symptoms.\n"
             ."3. Answer user questions directly based on the accurate clinic facts above.";
 
         $contents = collect($messages)
@@ -305,10 +316,10 @@ class AiChatbotController extends Controller
         }
 
         $apiKey = config('services.gemini.key');
-        $model = config('services.gemini.model', 'gemini-3.6-flash');
-        $fallbackModel = config('services.gemini.fallback_model', 'gemini-3.5-flash');
+        $model = config('services.gemini.model', 'gemini-2.0-flash');
+        $fallbackModel = config('services.gemini.fallback_model', 'gemini-1.5-flash');
 
-        if ($apiKey) {
+        if ($apiKey && ! str_starts_with($apiKey, 'AQ.')) {
             try {
                 $response = $this->gemini->generate($apiKey, $model, $systemInstruction, $contents);
                 if ($response->failed() && $fallbackModel && $fallbackModel !== $model) {
@@ -331,40 +342,112 @@ class AiChatbotController extends Controller
         return response()->json(['message' => $fallbackReply]);
     }
 
+    private function isClinicRelatedQuery(string $query): bool
+    {
+        $q = strtolower(trim($query));
+
+        // Greetings, polite introductions, bot capability inquiries
+        if (preg_match('/\b(hi|hello|hey|good\s*(morning|afternoon|evening)|greetings|sup|yo|welcome)\b/i', $q) ||
+            preg_match('/\b(who\s*are\s*you|what\s*(can|do)\s*you\s*do|help|what\s*is\s*your\s*purpose|how\s*can\s*you\s*help)\b/i', $q) ||
+            preg_match('/\b(thank\s*you|thanks|salamat|bye|goodbye)\b/i', $q)) {
+            return true;
+        }
+
+        $clinicKeywords = [
+            'clinic', 'tcc', 'campus', 'baluarte', 'unifast', 'tagoloan', 'college', 'school',
+            'health', 'medical', 'medicine', 'medicines', 'med', 'meds', 'drug', 'drugs', 'pill', 'pills',
+            'dispensary', 'pharmacy', 'prescription',
+            'vital', 'vitals', 'sign', 'signs', 'checkup', 'checkups', 'check-up', 'check-ups', 'check up',
+            'triage', 'bp', 'blood pressure', 'hypertension', 'hypotension',
+            'temperature', 'temp', 'thermometer', 'fever', 'chills',
+            'pulse', 'heart rate', 'oxygen', 'spo2', 'oximeter', 'respiratory', 'breathing',
+            'height', 'weight', 'bmi', 'physical', 'assessment', 'examination', 'exam',
+            'doctor', 'nurse', 'nurses', 'medic', 'staff', 'personnel', 'officer', 'duty',
+            'patient', 'patients', 'student', 'students', 'faculty', 'employee',
+            'ill', 'illness', 'sick', 'sickness', 'disease', 'condition', 'symptom', 'symptoms',
+            'headache', 'pain', 'ache', 'migraine', 'cough', 'colds', 'cold', 'flu', 'sore throat',
+            'stomach', 'stomachache', 'hyperacidity', 'acid', 'antacid', 'nausea', 'vomit', 'vomiting', 'diarrhea',
+            'dizzy', 'dizziness', 'faint', 'fainting', 'unconscious',
+            'injury', 'injured', 'wound', 'wound dressing', 'cut', 'bleed', 'bleeding', 'burn', 'bruise', 'fracture', 'sprain',
+            'first aid', 'first-aid', 'bandage', 'betadine', 'alcohol', 'gauze',
+            'allergy', 'allergic', 'antihistamine', 'asthma', 'inhaler',
+            'certificate', 'cert', 'med cert', 'clearance', 'excuse', 'ojt', 'practicum', 'sports clearance',
+            'hour', 'hours', 'time', 'open', 'opening', 'close', 'closing', 'schedule', 'when',
+            'where', 'location', 'place', 'locate', 'floor', 'room', 'building', 'address', 'ground floor',
+            'free', 'cost', 'fee', 'charge', 'pay', 'payment', 'price',
+            'eligible', 'eligibility', 'requirement', 'requirements', 'id', 'student id',
+            'emergency', 'emergencies', 'urgent', 'ambulance', 'hospital', 'rescue', 'transfer',
+            'portal', 'login', 'sign in', 'signin', 'account', 'password', 'forgot password', 'otp',
+            'bed', 'rest', 'observation', 'bay', 'cot', 'admission',
+            'consult', 'consultation', 'consultations', 'treatment', 'service', 'services', 'care'
+        ];
+
+        foreach ($clinicKeywords as $keyword) {
+            if (str_contains($q, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function generatePublicOfflineReply(string $query): string
     {
-        $q = strtolower($query);
+        $q = strtolower(trim($query));
 
-        if (preg_match('/\b(where|location|place|building|locate|find|address)\b/i', $q)) {
+        // 1. Vital Signs & Checkups
+        if (preg_match('/\b(vital|vitals|sign|signs|checkup|checkups|check-up|check-ups|check\s*up|triage|blood\s*pressure|bp|pulse|heart\s*rate|temperature|temp|spo2|oxygen|respiratory|breathing|bmi|height|weight|physical\s*(assessment|exam|checkup))\b/i', $q)) {
+            return "🩺 **Vital Signs & Checkups Available at TCC Clinic:**\n\nThe TCC Baluarte Campus Clinic provides comprehensive vital signs assessment and routine primary checkups **100% free of charge** for all students, faculty, and administrative staff:\n\n1. **Blood Pressure (BP) Monitoring:** Routine hypertension screening, hypotension checks, and monitoring for dizziness.\n2. **Body Temperature:** Digital thermometer screening for fevers, chills, and viral infections.\n3. **Heart Rate / Pulse Rate & Rhythm:** Radial pulse count and pulse oximeter evaluation.\n4. **Oxygen Saturation (SpO2):** Rapid fingertip pulse oximetry for respiratory wellness.\n5. **Respiratory Rate:** Breaths-per-minute monitoring for asthma or breathing difficulties.\n6. **Height, Weight & BMI Measurement:** Physical wellness and nutritional status baseline.\n7. **Basic Physical Assessment & Triage:** Evaluation of minor injuries, ear-nose-throat discomfort, abdominal pain triage, and bed-rest observation bay admission.\n\n📍 **Where to Avail:** Ground Floor, Beside UniFAST Building, Baluarte Campus\n🕒 **Clinic Hours:** Monday to Friday, 8:00 AM – 5:00 PM (Walk-ins welcome, just present your TCC ID)";
+        }
+
+        // 2. Location
+        if (preg_match('/\b(where|location|place|building|locate|find|address|floor|unifast|baluarte)\b/i', $q)) {
             return "📍 **Clinic Location:**\nThe TCC Clinic is located on the **Ground Floor, Beside the UniFAST Building** at Baluarte Campus, Tagoloan, Misamis Oriental.\n\nWalk-ins are welcomed during our regular operating hours!";
         }
 
-        if (preg_match('/\b(hour|time|open|schedule|when|close)\b/i', $q)) {
+        // 3. Operating Hours
+        if (preg_match('/\b(hour|hours|time|open|opening|schedule|when|close|closing)\b/i', $q)) {
             return "🕒 **Operating Hours:**\nThe TCC Baluarte Campus Clinic is open **Monday through Friday, from 8:00 AM to 5:00 PM**, with active duty registered nurses on site throughout the day.";
         }
 
-        if (preg_match('/\b(cost|fee|pay|free|price|charge)\b/i', $q)) {
+        // 4. Free Services & Cost
+        if (preg_match('/\b(cost|fee|fees|pay|payment|free|price|charge)\b/i', $q)) {
             return "💊 **Free Health Services:**\nYes! All medical consultations, vital sign checkups, emergency first-aid treatments, and basic dispensary medicines are **100% free of charge** for all TCC students, faculty, and administrative staff.";
         }
 
-        if (preg_match('/\b(med\s*cert|certificate|clearance|excuse|ojt)\b/i', $q)) {
+        // 5. Medical Certificate & Clearance
+        if (preg_match('/\b(med\s*cert|certificate|clearance|excuse|ojt|practicum|sports\s*clearance)\b/i', $q)) {
             return "📋 **Medical Certificate & Health Clearance:**\nTo request an official Medical Certificate for class excuse, sports participation, or OJT clearance:\n1. Visit the clinic in person (Ground Floor, Beside UniFAST Building).\n2. Present your Student ID.\n3. Complete an in-person health assessment with our duty nurse.\n4. An officially signed Medical Certificate will be issued upon clearance.";
         }
 
-        if (preg_match('/\b(emergency|urgent|ambulance|hospital|severe|accident)\b/i', $q)) {
+        // 6. Emergency Protocols
+        if (preg_match('/\b(emergency|emergencies|urgent|ambulance|hospital|severe|accident|rescue|trauma)\b/i', $q)) {
             return "🚨 **Emergency Protocols:**\nIn case of critical emergencies:\n1. The campus clinic team stabilizes the patient immediately.\n2. We coordinate rapid emergency transport with the **Tagoloan Municipal Health Office** and municipal rescue units.\n3. The patient's emergency contact or parents are notified immediately.";
         }
 
-        if (preg_match('/\b(medicine|drug|pill|dispensary|stock)\b/i', $q)) {
+        // 7. Medicines & Dispensary
+        if (preg_match('/\b(medicine|medicines|drug|drugs|pill|pills|dispensary|stock|paracetamol|antacid|analgesic|antihistamine)\b/i', $q)) {
             return "💊 **Available Medications:**\nThe clinic maintains an active stock of essential over-the-counter medicines including analgesics/pain relievers, fever medications (paracetamol), antacids, oral rehydration salts, antihistamines, and antiseptic wound care supplies — all dispensed free of charge upon clinical evaluation.";
         }
 
-        if (preg_match('/\b(login|sign\s*in|portal|account|access)\b/i', $q)) {
+        // 8. Eligibility / Who can visit
+        if (preg_match('/\b(who|eligible|eligibility|visitor|visitors|student|students|faculty|staff|requirements|requirement)\b/i', $q)) {
+            return "👥 **Eligibility:**\nAll actively enrolled Tagoloan Community College students, faculty members, administrative staff, and official campus visitors are welcome and covered at zero cost. Just bring your TCC ID card!";
+        }
+
+        // 9. Portal Access & Sign In
+        if (preg_match('/\b(login|sign\s*in|portal|account|password|access)\b/i', $q)) {
             return "🔐 **Clinic Management Portal:**\nAuthorized clinic staff, nurses, and administrators can access the system by clicking **'Sign In'** at the top right of this page or visiting [/login](/login).";
         }
 
-        if (preg_match('/\b(hello|hi|hey|good\s*(morning|afternoon|evening)|sup)\b/i', $q)) {
-            return "Hello! 👋 Welcome to the **Tagoloan Community College (TCC) Clinic** virtual assistant. How can I help you today? You can ask about our campus clinic location, operating hours, free medications, medical certificate procedures, or emergency protocols!";
+        // 10. Greetings & Friendly Bot Info
+        if (preg_match('/\b(hello|hi|hey|good\s*(morning|afternoon|evening)|sup|greetings)\b/i', $q)) {
+            return "Hello! 👋 Welcome to the **Tagoloan Community College (TCC) Clinic** virtual assistant. How can I help you today? You can ask about our campus clinic location, operating hours, free medications, vital signs & checkups, medical certificate procedures, or emergency protocols!";
+        }
+
+        // 11. Catch-all for non-clinic questions that bypassed initial keyword check
+        if (! $this->isClinicRelatedQuery($q)) {
+            return "I apologize, but I am specifically designed to assist with **Tagoloan Community College (TCC) Clinic** inquiries only.\n\nI can only answer questions related to:\n• Clinic operating hours & campus location\n• Free dispensary medicines & consultations\n• Vital signs triage & checkups (BP, temperature, pulse, SpO2)\n• Medical certificates & OJT clearance\n• Emergency protocols\n\nPlease feel free to ask any clinic or campus health question!";
         }
 
         return "Thank you for reaching out to the **TCC Clinic Assistant**! 🏥\n\n- **Location:** Ground Floor, Beside UniFAST Building, Baluarte Campus, Tagoloan\n- **Hours:** Monday to Friday, 8:00 AM – 5:00 PM\n- **Services:** Free consultations, vital sign triage, free medicines, and official Medical Certificates.\n\nFor in-person assistance, feel free to walk into the clinic or consult with our on-duty campus nurse!";
