@@ -307,22 +307,29 @@ class AuthController extends Controller
             config(['mail.mailers.smtp.timeout' => (int) (env('MAIL_TIMEOUT') ?: 4)]);
         }
 
+        $tccLogoUrl = 'https://raw.githubusercontent.com/angel-stacee/TCCCMS/main/public/tcc-logo.png';
+
         $htmlBody = '
-        <div style="font-family: Arial, sans-serif; max-width: 580px; margin: 0 auto; padding: 24px; border: 1px solid #e8dfd4; border-radius: 12px; background-color: #ffffff;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 28px 24px; border: 1px solid #e8dfd4; border-radius: 16px; background-color: #ffffff; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
             <div style="text-align: center; margin-bottom: 24px;">
-                <h2 style="color: #8a6f50; margin: 0; font-size: 22px;">TCC Clinic Management System</h2>
-                <p style="color: #777777; font-size: 13px; margin-top: 4px;">Password Reset Verification Code</p>
+                <img src="'.$tccLogoUrl.'" alt="Tagoloan Community College" width="80" height="80" style="display: block; margin: 0 auto 12px auto; width: 80px; height: 80px; border-radius: 50%; border: 3px solid #d4a017; box-shadow: 0 4px 10px rgba(112,9,31,0.18); object-fit: cover;" />
+                <h2 style="color: #70091f; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.3px;">Tagoloan Community College</h2>
+                <p style="color: #665b50; font-size: 14px; margin: 4px 0 0 0; font-weight: 600;">Clinic Management System</p>
+                <div style="display: inline-block; margin-top: 10px; padding: 4px 12px; background-color: #fdf6ec; border: 1px solid #f3d19c; border-radius: 999px; color: #92400e; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;">
+                    Password Reset Verification Code
+                </div>
             </div>
-            <div style="padding: 24px; background-color: #faf8f5; border-radius: 10px; border: 1px solid #f0eae1; text-align: center;">
-                <p style="font-size: 15px; color: #333333; margin-top: 0;">Hello <strong>'.htmlspecialchars($user->name).'</strong>,</p>
-                <p style="font-size: 14px; color: #555555; line-height: 1.5;">Your TCC Clinic OTP verification code is:</p>
-                <div style="margin: 22px auto; font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #8a6f50; background: #ffffff; padding: 14px 28px; display: inline-block; border-radius: 10px; border: 2px dashed #8a6f50;">
+            <div style="padding: 24px; background-color: #faf7f2; border-radius: 12px; border: 1px solid #ebd9c8; text-align: center;">
+                <p style="font-size: 15px; color: #2d241e; margin-top: 0; font-weight: 500;">Hello <strong style="color: #70091f;">'.htmlspecialchars($user->name).'</strong>,</p>
+                <p style="font-size: 14px; color: #5a4f44; line-height: 1.5; margin: 0 0 16px 0;">Use the 6-digit OTP verification code below to reset your clinic account password:</p>
+                <div style="margin: 16px auto; font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #70091f; background: #ffffff; padding: 14px 28px; display: inline-block; border-radius: 12px; border: 2px dashed #70091f; box-shadow: 0 2px 8px rgba(112,9,31,0.08);">
                     '.$otp.'
                 </div>
-                <p style="font-size: 13px; color: #777777; margin-bottom: 0;">This code expires in <strong>15 minutes</strong>.</p>
+                <p style="font-size: 13px; color: #7d7065; margin: 16px 0 0 0;">This code is valid for <strong>15 minutes</strong>.</p>
             </div>
-            <p style="font-size: 12px; color: #999999; margin-top: 24px; text-align: center; line-height: 1.4;">
-                If you did not request this code, please ignore this email or notify the Clinic Administrator.
+            <p style="font-size: 12px; color: #9e9389; margin-top: 24px; text-align: center; line-height: 1.5;">
+                If you did not request this password reset, please ignore this email or contact the TCC Clinic Administrator immediately.<br />
+                &copy; '.date('Y').' Tagoloan Community College Health Services Clinic
             </p>
         </div>';
 
