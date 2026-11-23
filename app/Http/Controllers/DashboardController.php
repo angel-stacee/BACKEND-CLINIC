@@ -35,13 +35,21 @@ class DashboardController extends Controller
         $employeeVisitsTotal = ClinicVisit::where(function ($q) {
             $q->whereNotNull('faculty_id')->orWhereNotNull('staff_id');
         })->count();
-        $maleCount = Student::whereRaw('LOWER(sex) = ?', ['male'])->count()
-            + Staff::whereRaw('LOWER(sex) = ?', ['male'])->count()
-            + Faculty::whereRaw('LOWER(sex) = ?', ['male'])->count();
 
-        $femaleCount = Student::whereRaw('LOWER(sex) = ?', ['female'])->count()
-            + Staff::whereRaw('LOWER(sex) = ?', ['female'])->count()
-            + Faculty::whereRaw('LOWER(sex) = ?', ['female'])->count();
+        $studentMale = Student::whereRaw('LOWER(sex) = ?', ['male'])->count();
+        $studentFemale = Student::whereRaw('LOWER(sex) = ?', ['female'])->count();
+
+        $staffMale = Staff::whereRaw('LOWER(sex) = ?', ['male'])->count();
+        $staffFemale = Staff::whereRaw('LOWER(sex) = ?', ['female'])->count();
+
+        $facultyMale = Faculty::whereRaw('LOWER(sex) = ?', ['male'])->count();
+        $facultyFemale = Faculty::whereRaw('LOWER(sex) = ?', ['female'])->count();
+
+        $employeeMale = $staffMale + $facultyMale;
+        $employeeFemale = $staffFemale + $facultyFemale;
+
+        $maleCount = $studentMale + $employeeMale;
+        $femaleCount = $studentFemale + $employeeFemale;
 
         $monthStart = now()->subMonths(7)->startOfMonth()->toDateString();
         $isSqlite = DB::getDriverName() === 'sqlite';
@@ -190,12 +198,34 @@ class DashboardController extends Controller
                 'expiring_soon' => $expiringSoonMedicines,
             ],
             'student_gender_counts' => [
-                'male' => $maleCount,
-                'female' => $femaleCount,
+                'male' => $studentMale,
+                'female' => $studentFemale,
+            ],
+            'faculty_staff_gender_counts' => [
+                'male' => $employeeMale,
+                'female' => $employeeFemale,
+                'staff' => ['male' => $staffMale, 'female' => $staffFemale],
+                'faculty' => ['male' => $facultyMale, 'female' => $facultyFemale],
+            ],
+            'employee_gender_counts' => [
+                'male' => $employeeMale,
+                'female' => $employeeFemale,
             ],
             'patient_gender_counts' => [
                 'male' => $maleCount,
                 'female' => $femaleCount,
+                'students' => [
+                    'male' => $studentMale,
+                    'female' => $studentFemale,
+                ],
+                'faculty_staff' => [
+                    'male' => $employeeMale,
+                    'female' => $employeeFemale,
+                ],
+                'employees' => [
+                    'male' => $employeeMale,
+                    'female' => $employeeFemale,
+                ],
             ],
             'monthly_visits' => $monthlyVisits,
             'visit_trends' => $visitTrends,
