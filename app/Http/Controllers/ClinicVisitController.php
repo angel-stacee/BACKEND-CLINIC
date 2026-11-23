@@ -871,6 +871,227 @@ class ClinicVisitController extends Controller
         return response()->json($payload);
     }
 
+    /**
+     * Requirement: Instant Patient Identification & Medical History Lookup by ID Number
+     * Automatically retrieves full patient profile and previous consultation history.
+     */
+    public function lookupPatient(Request $request)
+    {
+        $id = trim((string) ($request->query('id') ?? $request->query('student_id') ?? $request->query('query') ?? ''));
+
+        if ($id === '') {
+            return response()->json([
+                'found' => false,
+                'message' => 'Please provide an ID number to search.',
+            ], 400);
+        }
+
+        // 1. Search Students by student_id
+        $student = Student::where('student_id', $id)
+            ->with(['clinicVisits' => function ($q) {
+                $q->with(['nurse:id,name', 'medicine:id,medicine_name,unit'])
+                    ->orderBy('visit_date', 'desc')
+                    ->orderBy('id', 'desc');
+            }])
+            ->first();
+
+        if ($student) {
+            $visits = $student->clinicVisits;
+            $totalVisits = $visits->count();
+            $lastVisit = $visits->first();
+
+            $age = null;
+            if ($student->birth_date) {
+                try {
+                    $age = \Carbon\Carbon::parse($student->birth_date)->age;
+                } catch (\Throwable) {}
+            }
+
+            return response()->json([
+                'found' => true,
+                'type' => 'student',
+                'patient' => [
+                    'id' => $student->id,
+                    'student_id' => $student->student_id,
+                    'identifier' => $student->student_id,
+                    'first_name' => $student->first_name,
+                    'middle_name' => $student->middle_name,
+                    'last_name' => $student->last_name,
+                    'full_name' => trim("{$student->first_name} {$student->middle_name} {$student->last_name}"),
+                    'name' => trim("{$student->first_name} {$student->middle_name} {$student->last_name}"),
+                    'course' => $student->course,
+                    'year_level' => $student->year_level,
+                    'section' => $student->section,
+                    'sex' => $student->sex,
+                    'birth_date' => $student->birth_date ? \Carbon\Carbon::parse($student->birth_date)->toDateString() : null,
+                    'age' => $age,
+                    'contact_number' => $student->contact_number,
+                    'address' => $student->address,
+                    'department' => $student->department ?? $student->course,
+                    'total_visits' => $totalVisits,
+                    'last_visit_date' => $lastVisit ? $lastVisit->visit_date : null,
+                    'medical_history' => $visits->take(10)->map(function ($v) {
+                        return [
+                            'id' => $v->id,
+                            'visit_date' => $v->visit_date,
+                            'reason' => $v->reason,
+                            'symptoms' => $v->symptoms,
+                            'temperature' => $v->temperature,
+                            'blood_pressure' => $v->blood_pressure,
+                            'assessment' => $v->assessment,
+                            'treatment' => $v->treatment,
+                            'medicine_name' => $v->medicine ? $v->medicine->medicine_name : $v->medicine_name,
+                            'medicine_quantity' => $v->medicine_quantity,
+                            'medicine_unit' => $v->medicine ? $v->medicine->unit : null,
+                            'nurse_name' => $v->nurse ? $v->nurse->name : null,
+                            'remarks' => $v->remarks,
+                        ];
+                    }),
+                ],
+            ]);
+        }
+
+        // 2. Search Faculty by employee_id
+        $faculty = Faculty::where('employee_id', $id)
+            ->with(['clinicVisits' => function ($q) {
+                $q->with(['nurse:id,name', 'medicine:id,medicine_name,unit'])
+                    ->orderBy('visit_date', 'desc')
+                    ->orderBy('id', 'desc');
+            }])
+            ->first();
+
+        if ($faculty) {
+            $visits = $faculty->clinicVisits;
+            $totalVisits = $visits->count();
+            $lastVisit = $visits->first();
+
+            $age = null;
+            if ($faculty->birth_date) {
+                try {
+                    $age = \Carbon\Carbon::parse($faculty->birth_date)->age;
+                } catch (\Throwable) {}
+            }
+
+            return response()->json([
+                'found' => true,
+                'type' => 'faculty',
+                'patient' => [
+                    'id' => $faculty->id,
+                    'employee_id' => $faculty->employee_id,
+                    'student_id' => $faculty->employee_id,
+                    'identifier' => $faculty->employee_id,
+                    'first_name' => $faculty->first_name,
+                    'middle_name' => $faculty->middle_name,
+                    'last_name' => $faculty->last_name,
+                    'full_name' => trim("{$faculty->first_name} {$faculty->middle_name} {$faculty->last_name}"),
+                    'name' => trim("{$faculty->first_name} {$faculty->middle_name} {$faculty->last_name}"),
+                    'position' => $faculty->position,
+                    'department' => $faculty->department,
+                    'course' => $faculty->department,
+                    'year_level' => $faculty->position,
+                    'section' => null,
+                    'sex' => $faculty->sex,
+                    'birth_date' => $faculty->birth_date ? \Carbon\Carbon::parse($faculty->birth_date)->toDateString() : null,
+                    'age' => $age,
+                    'contact_number' => $faculty->contact_number,
+                    'address' => $faculty->address,
+                    'total_visits' => $totalVisits,
+                    'last_visit_date' => $lastVisit ? $lastVisit->visit_date : null,
+                    'medical_history' => $visits->take(10)->map(function ($v) {
+                        return [
+                            'id' => $v->id,
+                            'visit_date' => $v->visit_date,
+                            'reason' => $v->reason,
+                            'symptoms' => $v->symptoms,
+                            'temperature' => $v->temperature,
+                            'blood_pressure' => $v->blood_pressure,
+                            'assessment' => $v->assessment,
+                            'treatment' => $v->treatment,
+                            'medicine_name' => $v->medicine ? $v->medicine->medicine_name : $v->medicine_name,
+                            'medicine_quantity' => $v->medicine_quantity,
+                            'medicine_unit' => $v->medicine ? $v->medicine->unit : null,
+                            'nurse_name' => $v->nurse ? $v->nurse->name : null,
+                            'remarks' => $v->remarks,
+                        ];
+                    }),
+                ],
+            ]);
+        }
+
+        // 3. Search Staff by staff_id
+        $staff = Staff::where('staff_id', $id)
+            ->with(['clinicVisits' => function ($q) {
+                $q->with(['nurse:id,name', 'medicine:id,medicine_name,unit'])
+                    ->orderBy('visit_date', 'desc')
+                    ->orderBy('id', 'desc');
+            }])
+            ->first();
+
+        if ($staff) {
+            $visits = $staff->clinicVisits;
+            $totalVisits = $visits->count();
+            $lastVisit = $visits->first();
+
+            $age = null;
+            if ($staff->birth_date) {
+                try {
+                    $age = \Carbon\Carbon::parse($staff->birth_date)->age;
+                } catch (\Throwable) {}
+            }
+
+            return response()->json([
+                'found' => true,
+                'type' => 'staff',
+                'patient' => [
+                    'id' => $staff->id,
+                    'staff_id' => $staff->staff_id,
+                    'student_id' => $staff->staff_id,
+                    'identifier' => $staff->staff_id,
+                    'first_name' => $staff->first_name,
+                    'middle_name' => $staff->middle_name,
+                    'last_name' => $staff->last_name,
+                    'full_name' => trim("{$staff->first_name} {$staff->middle_name} {$staff->last_name}"),
+                    'name' => trim("{$staff->first_name} {$staff->middle_name} {$staff->last_name}"),
+                    'position' => $staff->position,
+                    'department' => $staff->department,
+                    'course' => $staff->department,
+                    'year_level' => $staff->position,
+                    'section' => null,
+                    'sex' => $staff->sex,
+                    'birth_date' => $staff->birth_date ? \Carbon\Carbon::parse($staff->birth_date)->toDateString() : null,
+                    'age' => $age,
+                    'contact_number' => $staff->contact_number,
+                    'address' => $staff->address,
+                    'total_visits' => $totalVisits,
+                    'last_visit_date' => $lastVisit ? $lastVisit->visit_date : null,
+                    'medical_history' => $visits->take(10)->map(function ($v) {
+                        return [
+                            'id' => $v->id,
+                            'visit_date' => $v->visit_date,
+                            'reason' => $v->reason,
+                            'symptoms' => $v->symptoms,
+                            'temperature' => $v->temperature,
+                            'blood_pressure' => $v->blood_pressure,
+                            'assessment' => $v->assessment,
+                            'treatment' => $v->treatment,
+                            'medicine_name' => $v->medicine ? $v->medicine->medicine_name : $v->medicine_name,
+                            'medicine_quantity' => $v->medicine_quantity,
+                            'medicine_unit' => $v->medicine ? $v->medicine->unit : null,
+                            'nurse_name' => $v->nurse ? $v->nurse->name : null,
+                            'remarks' => $v->remarks,
+                        ];
+                    }),
+                ],
+            ]);
+        }
+
+        return response()->json([
+            'found' => false,
+            'searched_id' => $id,
+            'message' => "No existing patient record found with ID '{$id}'.",
+        ]);
+    }
+
     private function normalizeTemperature(?string $temp): ?string
     {
         if ($temp === null) {

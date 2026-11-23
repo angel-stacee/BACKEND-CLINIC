@@ -73,6 +73,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/password', [AuthController::class, 'changePassword']);
     Route::get('/dashboard', [DashboardController::class, 'index']);
     Route::get('/clinic-visit-options', [ClinicVisitController::class, 'options']);
+    Route::get('/patients/lookup', [ClinicVisitController::class, 'lookupPatient']);
     Route::get('/patients/check-id', [StudentController::class, 'checkId']);
     Route::get('/students/{student}/medical-history', [StudentController::class, 'medicalHistory']);
     Route::get('/staff/{staff}/medical-history', [StaffController::class, 'medicalHistory']);
