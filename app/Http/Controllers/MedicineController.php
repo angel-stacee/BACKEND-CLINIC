@@ -152,6 +152,18 @@ class MedicineController extends Controller
             ->orderBy('expiration_date')
             ->value('expiration_date');
 
+        $categoryBreakdown = Medicine::query()
+            ->selectRaw('treatment_type, count(*) as medicine_count, COALESCE(SUM(stock), 0) as total_stock')
+            ->groupBy('treatment_type')
+            ->orderByDesc('total_stock')
+            ->get();
+
+        $topMedicines = Medicine::query()
+            ->select(['id', 'medicine_name', 'treatment_type', 'unit', 'stock'])
+            ->orderByDesc('stock')
+            ->limit(7)
+            ->get();
+
         $payload = $medicines->toArray();
         $payload['summary'] = [
             'total_medicines' => $medicines->total(),
@@ -170,6 +182,8 @@ class MedicineController extends Controller
             'good_batch_count' => (int) ($batchStats->good_batch_count ?? 0),
             'expired_medicines' => $expiredItems,
             'expiring_soon_medicines' => $expiringSoonItems,
+            'category_breakdown' => $categoryBreakdown,
+            'top_medicines' => $topMedicines,
         ];
 
         return response()->json($payload);
