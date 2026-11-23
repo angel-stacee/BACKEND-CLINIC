@@ -259,6 +259,27 @@ class ReportController extends Controller
         })
             ->values();
 
+        $visitsByDepartment = $visits->groupBy(function ($visit) {
+            $dept = $visit->department;
+            if (! $dept) {
+                if ($visit->faculty && ! empty($visit->faculty->department)) {
+                    $dept = $visit->faculty->department;
+                } elseif ($visit->staff && ! empty($visit->staff->department)) {
+                    $dept = $visit->staff->department;
+                } elseif ($visit->student && ! empty($visit->student->course)) {
+                    $dept = $this->mapCourseToDepartment($visit->student->course);
+                }
+            }
+            return $dept ?: 'N/A';
+        })->map(function ($group, $dept) use ($totalVisits) {
+            return [
+                'department' => $dept,
+                'short_name' => $this->getDepartmentShortName($dept),
+                'visits' => $group->count(),
+                'percentage' => $totalVisits > 0 ? round(($group->count() / $totalVisits) * 100, 1) : 0,
+            ];
+        })->sortByDesc('visits')->values();
+
         return response()->json([
 
             'report' => [
@@ -278,6 +299,8 @@ class ReportController extends Controller
                 'faculty_visits' => $facultyVisits,
                 'staff_visits' => $staffVisits,
             ],
+
+            'visits_by_department' => $visitsByDepartment,
 
             'reasons' => $reasons,
 
@@ -376,6 +399,308 @@ class ReportController extends Controller
             ->implode(' ');
 
         return $name ?: $fallback;
+    }
+
+    public function analytics(Request $request)
+    {
+        $periodType = $request->input('period_type', 'monthly');
+        $now = Carbon::now();
+        $month = null;
+        $year = null;
+
+        switch ($periodType) {
+            case 'daily':
+                $refDate = $request->filled('date') ? Carbon::parse($request->date) : $now->copy();
+                $startDate = $refDate->copy()->startOfDay();
+                $endDate = $refDate->copy()->endOfDay();
+                $periodLabel = 'Daily (' . $startDate->format('M d, Y') . ')';
+                break;
+
+            case 'weekly':
+                $refDate = $request->filled('date') ? Carbon::parse($request->date) : $now->copy();
+                $startDate = $refDate->copy()->startOfWeek();
+                $endDate = $refDate->copy()->endOfWeek();
+                $periodLabel = 'Weekly (' . $startDate->format('M d') . ' - ' . $endDate->format('M d, Y') . ')';
+                break;
+
+            case 'monthly':
+                $month = (int) ($request->month ?: $now->month);
+                $year = (int) ($request->year ?: $now->year);
+                $startDate = Carbon::create($year, $month, 1)->startOfMonth();
+                $endDate = $startDate->copy()->endOfMonth();
+                $periodLabel = 'Monthly (' . $startDate->format('F Y') . ')';
+                break;
+
+            case 'yearly':
+                $year = (int) ($request->year ?: $now->year);
+                $startDate = Carbon::create($year, 1, 1)->startOfYear();
+                $endDate = Carbon::create($year, 12, 31)->endOfYear();
+                $periodLabel = 'Yearly (' . $year . ')';
+                break;
+
+            case 'custom':
+                $request->validate([
+                    'start_date' => 'required|date',
+                    'end_date' => 'required|date|after_or_equal:start_date',
+                ]);
+                $startDate = Carbon::parse($request->start_date)->startOfDay();
+                $endDate = Carbon::parse($request->end_date)->endOfDay();
+                $periodLabel = 'Custom (' . $startDate->format('M d, Y') . ' - ' . $endDate->format('M d, Y') . ')';
+                break;
+
+            case 'all':
+            default:
+                $periodType = 'all';
+                $startDate = Carbon::create(2020, 1, 1)->startOfDay();
+                $endDate = Carbon::create(2100, 12, 31)->endOfDay();
+                $periodLabel = 'All Recorded Visits';
+                break;
+        }
+
+        $query = ClinicVisit::query()
+            ->select([
+                'id', 'student_id', 'faculty_id', 'staff_id', 'nurse_id', 'department',
+                'medicine_id', 'medicine_quantity', 'visit_date', 'reason', 'symptoms',
+                'temperature', 'blood_pressure', 'created_at',
+            ])
+            ->with([
+                'student:id,student_id,first_name,middle_name,last_name,course,year_level,section',
+                'faculty:id,employee_id,first_name,middle_name,last_name,department,position',
+                'staff:id,staff_id,first_name,middle_name,last_name,department,position',
+            ]);
+
+        if ($periodType !== 'all') {
+            $query->whereBetween('visit_date', [
+                $startDate->toDateString(),
+                $endDate->toDateString(),
+            ]);
+        }
+
+        if ($request->filled('patient_type') && $request->patient_type !== 'all') {
+            if ($request->patient_type === 'student') {
+                $query->whereNotNull('student_id');
+            } elseif ($request->patient_type === 'faculty') {
+                $query->whereNotNull('faculty_id');
+            } elseif ($request->patient_type === 'staff') {
+                $query->whereNotNull('staff_id');
+            }
+        }
+
+        $visits = $query->orderBy('visit_date', 'asc')->get();
+
+        $totalVisits = $visits->count();
+        $studentVisits = $visits->whereNotNull('student_id')->count();
+        $facultyVisits = $visits->whereNotNull('faculty_id')->count();
+        $staffVisits = $visits->whereNotNull('staff_id')->count();
+
+        // Department map: deptName => ['visits' => int, 'symptoms' => [symptom => count]]
+        $deptStats = [];
+        // Overall symptoms map: symptom => count
+        $overallSymptoms = [];
+
+        foreach ($visits as $visit) {
+            // 1. Resolve Department
+            $dept = trim($visit->department ?? '');
+            if (empty($dept)) {
+                if ($visit->faculty && !empty($visit->faculty->department)) {
+                    $dept = trim($visit->faculty->department);
+                } elseif ($visit->staff && !empty($visit->staff->department)) {
+                    $dept = trim($visit->staff->department);
+                } elseif ($visit->student && !empty($visit->student->course)) {
+                    $dept = $this->mapCourseToDepartment($visit->student->course);
+                }
+            }
+            $dept = !empty($dept) ? $dept : 'N/A';
+
+            if (!isset($deptStats[$dept])) {
+                $deptStats[$dept] = [
+                    'department' => $dept,
+                    'short_name' => $this->getDepartmentShortName($dept),
+                    'visits' => 0,
+                    'symptoms' => [],
+                ];
+            }
+            $deptStats[$dept]['visits']++;
+
+            // 2. Extract Symptoms
+            $visitSymptoms = [];
+            $rawSymptoms = trim((string)($visit->symptoms ?? ''));
+            if (!empty($rawSymptoms)) {
+                $parts = preg_split('/[,;\/]+/', $rawSymptoms);
+                foreach ($parts as $p) {
+                    $clean = trim($p);
+                    if (!empty($clean) && strlen($clean) > 2) {
+                        $visitSymptoms[] = ucwords(strtolower($clean));
+                    }
+                }
+            }
+
+            if (empty($visitSymptoms) && !empty($visit->reason)) {
+                $r = trim($visit->reason);
+                $lowR = strtolower($r);
+                if (!in_array($lowR, ['other', 'routine checkup', 'medical certificate', 'n/a', 'none', 'consultation'])) {
+                    $visitSymptoms[] = ucwords($lowR);
+                }
+            }
+
+            if (empty($visitSymptoms)) {
+                $visitSymptoms[] = 'N/A';
+            }
+            $visitSymptoms = array_unique($visitSymptoms);
+
+            foreach ($visitSymptoms as $sym) {
+                $overallSymptoms[$sym] = ($overallSymptoms[$sym] ?? 0) + 1;
+                $deptStats[$dept]['symptoms'][$sym] = ($deptStats[$dept]['symptoms'][$sym] ?? 0) + 1;
+            }
+        }
+
+        $visitsByDepartment = collect($deptStats)
+            ->map(function ($d) use ($totalVisits) {
+                return [
+                    'department' => $d['department'],
+                    'short_name' => $d['short_name'],
+                    'visits' => $d['visits'],
+                    'percentage' => $totalVisits > 0 ? round(($d['visits'] / $totalVisits) * 100, 1) : 0,
+                    'is_highest' => false,
+                ];
+            })
+            ->sortByDesc('visits')
+            ->values()
+            ->toArray();
+
+        if (!empty($visitsByDepartment) && $visitsByDepartment[0]['visits'] > 0) {
+            $visitsByDepartment[0]['is_highest'] = true;
+        }
+
+        $topDept = !empty($visitsByDepartment) ? $visitsByDepartment[0] : [
+            'department' => 'None',
+            'short_name' => 'None',
+            'visits' => 0,
+            'percentage' => 0,
+        ];
+
+        $totalSymptomCounts = array_sum($overallSymptoms);
+        $commonSymptoms = collect($overallSymptoms)
+            ->map(function ($count, $symptom) use ($totalSymptomCounts) {
+                return [
+                    'symptom' => $symptom,
+                    'count' => $count,
+                    'percentage' => $totalSymptomCounts > 0 ? round(($count / $totalSymptomCounts) * 100, 1) : 0,
+                ];
+            })
+            ->sortByDesc('count')
+            ->values()
+            ->map(function ($item, $idx) {
+                $item['rank'] = $idx + 1;
+                return $item;
+            })
+            ->toArray();
+
+        // Top symptom candidate (prefer clinical symptom over 'N/A' if exists)
+        $topSymptomCandidate = collect($commonSymptoms)->first(fn($s) => $s['symptom'] !== 'N/A') ?? ($commonSymptoms[0] ?? null);
+        $topSymptom = $topSymptomCandidate ? [
+            'symptom' => $topSymptomCandidate['symptom'],
+            'count' => $topSymptomCandidate['count'],
+            'percentage' => $topSymptomCandidate['percentage'],
+        ] : [
+            'symptom' => 'None',
+            'count' => 0,
+            'percentage' => 0,
+        ];
+
+        // Top 5 symptom keys for grouped cross-department chart
+        $topSymptomKeys = collect($commonSymptoms)
+            ->filter(fn($s) => $s['symptom'] !== 'N/A' || count($commonSymptoms) === 1)
+            ->take(5)
+            ->pluck('symptom')
+            ->toArray();
+
+        $deptSymptomsDetailed = collect($deptStats)
+            ->map(function ($d) {
+                $sList = collect($d['symptoms'])
+                    ->map(fn($cnt, $sym) => ['symptom' => $sym, 'count' => $cnt])
+                    ->sortByDesc('count')
+                    ->values()
+                    ->toArray();
+
+                return [
+                    'department' => $d['department'],
+                    'short_name' => $d['short_name'],
+                    'total_visits' => $d['visits'],
+                    'top_symptom' => !empty($sList) ? $sList[0]['symptom'] : 'None',
+                    'symptoms' => $sList,
+                ];
+            })
+            ->sortByDesc('total_visits')
+            ->values()
+            ->toArray();
+
+        $groupedChartData = collect($deptStats)
+            ->map(function ($d) use ($topSymptomKeys) {
+                $row = [
+                    'department' => $d['department'],
+                    'short_name' => $d['short_name'],
+                    'total_visits' => $d['visits'],
+                ];
+                foreach ($topSymptomKeys as $symKey) {
+                    $row[$symKey] = $d['symptoms'][$symKey] ?? 0;
+                }
+                return $row;
+            })
+            ->sortByDesc('total_visits')
+            ->values()
+            ->toArray();
+
+        $totalDepartmentsCount = count(array_filter(array_keys($deptStats), fn($d) => $d !== 'N/A' || count($deptStats) === 1));
+
+        return response()->json([
+            'summary' => [
+                'total_visits' => $totalVisits,
+                'top_department' => $topDept,
+                'top_symptom' => $topSymptom,
+                'total_departments' => $totalDepartmentsCount,
+                'patient_type_counts' => [
+                    'student_visits' => $studentVisits,
+                    'faculty_visits' => $facultyVisits,
+                    'staff_visits' => $staffVisits,
+                ],
+            ],
+            'visits_by_department' => $visitsByDepartment,
+            'common_symptoms' => $commonSymptoms,
+            'department_symptoms' => $deptSymptomsDetailed,
+            'grouped_comparison' => [
+                'data' => $groupedChartData,
+                'symptom_keys' => $topSymptomKeys,
+            ],
+            'period' => [
+                'type' => $periodType,
+                'label' => $periodLabel,
+                'start_date' => $startDate->toDateString(),
+                'end_date' => $endDate->toDateString(),
+                'month' => $month ?: $now->month,
+                'year' => $year ?: $now->year,
+            ],
+            'all_departments' => array_values(array_unique(array_column($visitsByDepartment, 'department'))),
+            'generated_at' => Carbon::now()->toIso8601String(),
+        ]);
+    }
+
+    private function getDepartmentShortName(string $dept): string
+    {
+        if (preg_match('/\(([^)]+)\)/', $dept, $matches)) {
+            return trim($matches[1]);
+        }
+        $lower = strtolower($dept);
+        if (str_contains($lower, 'guidance')) return 'Guidance';
+        if (str_contains($lower, 'midwifery') || str_contains($lower, 'nursing')) return 'Midwifery';
+        if (str_contains($lower, 'education')) return 'Education';
+        if (str_contains($lower, 'business')) return 'Business Admin';
+        if (str_contains($lower, 'criminal')) return 'Criminology';
+        if (str_contains($lower, 'hospitality')) return 'Hospitality';
+        if (strlen($dept) > 18) {
+            return substr($dept, 0, 16) . '...';
+        }
+        return $dept;
     }
 
     private function mapCourseToDepartment(string $course): string
