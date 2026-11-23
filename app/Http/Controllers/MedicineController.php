@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
 use App\Models\MedicineTransaction;
+use App\Models\MedicineRequisition;
+use App\Models\ClinicVisit;
 use App\Services\MedicineInventoryService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -504,6 +506,389 @@ class MedicineController extends Controller
 
         return response()->json([
             'message' => 'Medicine permanently deleted.',
+        ]);
+    }
+
+    public function mostUsed(Request $request)
+    {
+        $today = Carbon::today()->toDateString();
+        $soonThreshold = Carbon::today()->addDays(30)->toDateString();
+        $nearThreshold = Carbon::today()->addDays(90)->toDateString();
+
+        // 1. Group dispensing by medicine from ClinicVisit
+        $dispensedByVisit = ClinicVisit::query()
+            ->whereNotNull('medicine_id')
+            ->selectRaw('medicine_id, SUM(medicine_quantity) as total_dispensed, COUNT(*) as visit_count, MAX(visit_date) as last_dispensed')
+            ->groupBy('medicine_id')
+            ->get()
+            ->keyBy('medicine_id');
+
+        // 2. Direct transactions dispensing
+        $dispensedByTx = MedicineTransaction::query()
+            ->where('transaction_type', 'dispense')
+            ->selectRaw('medicine_id, SUM(quantity) as total_dispensed, COUNT(*) as tx_count, MAX(created_at) as last_tx')
+            ->groupBy('medicine_id')
+            ->get()
+            ->keyBy('medicine_id');
+
+        // 3. Pending requisitions
+        $pendingRequisitions = MedicineRequisition::query()
+            ->where('status', 'pending')
+            ->selectRaw('medicine_id, COUNT(*) as pending_count, SUM(quantity_requested) as requested_quantity')
+            ->groupBy('medicine_id')
+            ->get()
+            ->keyBy('medicine_id');
+
+        $medicines = Medicine::query()
+            ->whereNull('deleted_at')
+            ->get();
+
+        $ranked = $medicines->map(function ($med) use ($dispensedByVisit, $dispensedByTx, $pendingRequisitions, $today, $soonThreshold, $nearThreshold) {
+            $vInfo = $dispensedByVisit->get($med->id);
+            $txInfo = $dispensedByTx->get($med->id);
+
+            $visitDispensed = (int) ($vInfo->total_dispensed ?? 0);
+            $txDispensed = (int) ($txInfo->total_dispensed ?? 0);
+            $totalDispensed = max($visitDispensed, $txDispensed);
+
+            $visitCount = (int) ($vInfo->visit_count ?? ($txInfo?->tx_count ?? 0));
+            $lastDispensed = $vInfo?->last_dispensed ?? ($txInfo?->last_tx ? substr((string)$txInfo->last_tx, 0, 10) : null);
+
+            $currentStock = max(0, (int) $med->stock);
+            $minStock = (int) ($med->minimum_stock ?: 10);
+
+            $isExpired = !empty($med->expiration_date) && $med->expiration_date < $today;
+            $isExpiringSoon = !empty($med->expiration_date) && $med->expiration_date >= $today && $med->expiration_date <= $soonThreshold;
+            $isNearExpiration = !empty($med->expiration_date) && $med->expiration_date > $soonThreshold && $med->expiration_date <= $nearThreshold;
+
+            $status = 'good';
+            if ($isExpired) {
+                $status = 'expired';
+            } elseif ($currentStock <= 0) {
+                $status = 'out_of_stock';
+            } elseif ($currentStock <= $minStock) {
+                $status = 'low_stock';
+            } elseif ($isExpiringSoon) {
+                $status = 'expiring_soon';
+            } elseif ($isNearExpiration) {
+                $status = 'near_expiration';
+            }
+
+            $usageRate = 'None Yet';
+            if ($totalDispensed >= 10 || $visitCount >= 5) {
+                $usageRate = 'High Usage';
+            } elseif ($totalDispensed >= 3 || $visitCount >= 2) {
+                $usageRate = 'Moderate Usage';
+            } elseif ($totalDispensed > 0 || $visitCount > 0) {
+                $usageRate = 'Occasional';
+            }
+
+            $recommendedQty = max(20, ($minStock * 3) - $currentStock);
+            if ($recommendedQty < 10) {
+                $recommendedQty = 10;
+            }
+
+            $pending = $pendingRequisitions->get($med->id);
+
+            $recent30Days = Carbon::today()->subDays(30)->toDateTimeString();
+            $recentDispenseCount = (int) MedicineTransaction::where('medicine_id', $med->id)
+                ->where('transaction_type', 'dispense')
+                ->where('created_at', '>=', $recent30Days)
+                ->sum('quantity');
+
+            $recentStockIn = (int) MedicineTransaction::where('medicine_id', $med->id)
+                ->where('transaction_type', 'stock_in')
+                ->where('created_at', '>=', $recent30Days)
+                ->sum('quantity');
+
+            $trendDirection = 'stable';
+            if ($recentDispenseCount > $recentStockIn || ($currentStock <= $minStock && $totalDispensed > 0)) {
+                $trendDirection = 'down';
+            } elseif ($recentStockIn > $recentDispenseCount) {
+                $trendDirection = 'up';
+            }
+
+            return [
+                'id' => $med->id,
+                'medicine_name' => $med->medicine_name,
+                'treatment_type' => $med->treatment_type ?: 'Medication',
+                'unit' => $med->unit ?: 'Tablet',
+                'stock' => $currentStock,
+                'minimum_stock' => $minStock,
+                'expiration_date' => $med->expiration_date,
+                'status' => $status,
+                'total_dispensed' => $totalDispensed,
+                'visit_count' => $visitCount,
+                'last_dispensed' => $lastDispensed,
+                'usage_rate' => $usageRate,
+                'recommended_request_qty' => $recommendedQty,
+                'trend_direction' => $trendDirection,
+                'has_pending_requisition' => !empty($pending),
+                'pending_requested_qty' => (int) ($pending->requested_quantity ?? 0),
+            ];
+        });
+
+        $sorted = $ranked->sort(function ($a, $b) {
+            if ($a['total_dispensed'] !== $b['total_dispensed']) {
+                return $b['total_dispensed'] <=> $a['total_dispensed'];
+            }
+            if ($a['visit_count'] !== $b['visit_count']) {
+                return $b['visit_count'] <=> $a['visit_count'];
+            }
+            return $a['stock'] <=> $b['stock'];
+        })->values();
+
+        return response()->json([
+            'most_used' => $sorted,
+            'summary' => [
+                'total_medicines' => $medicines->count(),
+                'total_dispensed_all' => $sorted->sum('total_dispensed'),
+                'high_usage_count' => $sorted->where('usage_rate', 'High Usage')->count(),
+                'low_stock_high_usage_count' => $sorted->filter(fn($m) => $m['usage_rate'] !== 'None Yet' && ($m['status'] === 'low_stock' || $m['status'] === 'out_of_stock'))->count(),
+            ],
+        ]);
+    }
+
+    public function stockTrend(Request $request)
+    {
+        $medicineId = $request->query('medicine_id');
+
+        if ($medicineId && $medicineId !== 'all') {
+            $medicine = Medicine::findOrFail($medicineId);
+
+            $transactions = MedicineTransaction::where('medicine_id', $medicine->id)
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            $visits = ClinicVisit::where('medicine_id', $medicine->id)
+                ->orderBy('visit_date', 'asc')
+                ->get();
+
+            $allDates = [];
+
+            foreach ($transactions as $tx) {
+                $d = substr((string)$tx->created_at, 0, 10);
+                if (!isset($allDates[$d])) {
+                    $allDates[$d] = ['date' => $d, 'stock_in' => 0, 'dispensed' => 0, 'events' => []];
+                }
+                if ($tx->transaction_type === 'stock_in' || $tx->transaction_type === 'return') {
+                    $allDates[$d]['stock_in'] += (int) $tx->quantity;
+                    $allDates[$d]['events'][] = "+{$tx->quantity} ({$tx->transaction_type})";
+                } elseif ($tx->transaction_type === 'dispense' || $tx->transaction_type === 'discard_expired') {
+                    $allDates[$d]['dispensed'] += (int) $tx->quantity;
+                    $allDates[$d]['events'][] = "-{$tx->quantity} ({$tx->transaction_type})";
+                }
+            }
+
+            foreach ($visits as $v) {
+                if ($v->visit_date && $v->medicine_quantity > 0) {
+                    $d = substr((string)$v->visit_date, 0, 10);
+                    if (!isset($allDates[$d])) {
+                        $allDates[$d] = ['date' => $d, 'stock_in' => 0, 'dispensed' => 0, 'events' => []];
+                    }
+                    $hasTx = $transactions->where('clinic_visit_id', $v->id)->count() > 0;
+                    if (!$hasTx) {
+                        $allDates[$d]['dispensed'] += (int) $v->medicine_quantity;
+                        $allDates[$d]['events'][] = "-{$v->medicine_quantity} (clinic visit)";
+                    }
+                }
+            }
+
+            ksort($allDates);
+
+            $currentActualStock = (int) $medicine->stock;
+            $timeline = [];
+            $running = 0;
+
+            foreach ($allDates as $d => $info) {
+                $net = $info['stock_in'] - $info['dispensed'];
+                $running += $net;
+                $timeline[] = [
+                    'date' => Carbon::parse($d)->format('M d'),
+                    'full_date' => $d,
+                    'stock_in' => $info['stock_in'],
+                    'dispensed' => $info['dispensed'],
+                    'net_change' => $net,
+                    'stock_level' => max(0, $running),
+                    'event' => implode(', ', $info['events']),
+                ];
+            }
+
+            if (count($timeline) > 0) {
+                $lastLevel = end($timeline)['stock_level'];
+                $offset = $currentActualStock - $lastLevel;
+                foreach ($timeline as &$pt) {
+                    $pt['stock_level'] = max(0, $pt['stock_level'] + $offset);
+                }
+                unset($pt);
+            } else {
+                $timeline[] = [
+                    'date' => Carbon::today()->subDays(7)->format('M d'),
+                    'full_date' => Carbon::today()->subDays(7)->toDateString(),
+                    'stock_in' => 0,
+                    'dispensed' => 0,
+                    'net_change' => 0,
+                    'stock_level' => $currentActualStock,
+                    'event' => 'Initial stock level',
+                ];
+                $timeline[] = [
+                    'date' => Carbon::today()->format('M d'),
+                    'full_date' => Carbon::today()->toDateString(),
+                    'stock_in' => 0,
+                    'dispensed' => 0,
+                    'net_change' => 0,
+                    'stock_level' => $currentActualStock,
+                    'event' => 'Current inventory',
+                ];
+            }
+
+            $totalDispensed = array_sum(array_column($timeline, 'dispensed'));
+            $totalStockIn = array_sum(array_column($timeline, 'stock_in'));
+            $netChange = $totalStockIn - $totalDispensed;
+
+            $direction = 'stable';
+            if ($netChange > 0) {
+                $direction = 'up';
+            } elseif ($netChange < 0 || ($currentActualStock <= ($medicine->minimum_stock ?: 10) && $totalDispensed > 0)) {
+                $direction = 'down';
+            }
+
+            return response()->json([
+                'medicine' => [
+                    'id' => $medicine->id,
+                    'medicine_name' => $medicine->medicine_name,
+                    'treatment_type' => $medicine->treatment_type ?: 'Medication',
+                    'unit' => $medicine->unit ?: 'Tablet',
+                    'stock' => $currentActualStock,
+                    'minimum_stock' => (int) ($medicine->minimum_stock ?: 10),
+                ],
+                'direction' => $direction,
+                'net_change' => $netChange,
+                'total_dispensed' => $totalDispensed,
+                'total_restocked' => $totalStockIn,
+                'timeline' => $timeline,
+            ]);
+        }
+
+        // Overall trend across all medicines
+        $visits = ClinicVisit::whereNotNull('medicine_id')
+            ->selectRaw('visit_date, SUM(medicine_quantity) as total_dispensed')
+            ->groupBy('visit_date')
+            ->orderBy('visit_date', 'asc')
+            ->get();
+
+        $txs = MedicineTransaction::selectRaw('DATE(created_at) as tx_date, transaction_type, SUM(quantity) as total_qty')
+            ->groupBy('tx_date', 'transaction_type')
+            ->orderBy('tx_date', 'asc')
+            ->get();
+
+        $allDates = [];
+        foreach ($txs as $tx) {
+            $d = $tx->tx_date;
+            if (!isset($allDates[$d])) {
+                $allDates[$d] = ['date' => $d, 'stock_in' => 0, 'dispensed' => 0];
+            }
+            if ($tx->transaction_type === 'stock_in' || $tx->transaction_type === 'return') {
+                $allDates[$d]['stock_in'] += (int) $tx->total_qty;
+            } elseif ($tx->transaction_type === 'dispense') {
+                $allDates[$d]['dispensed'] += (int) $tx->total_qty;
+            }
+        }
+
+        foreach ($visits as $v) {
+            $d = (string) $v->visit_date;
+            if (!isset($allDates[$d])) {
+                $allDates[$d] = ['date' => $d, 'stock_in' => 0, 'dispensed' => 0];
+            }
+            $allDates[$d]['dispensed'] += (int) $v->total_dispensed;
+        }
+
+        ksort($allDates);
+        $totalStock = (int) Medicine::sum('stock');
+        $timeline = [];
+        $running = $totalStock;
+
+        foreach ($allDates as $d => $info) {
+            $net = $info['stock_in'] - $info['dispensed'];
+            $timeline[] = [
+                'date' => Carbon::parse($d)->format('M d'),
+                'full_date' => $d,
+                'stock_in' => $info['stock_in'],
+                'dispensed' => $info['dispensed'],
+                'net_change' => $net,
+                'stock_level' => max(0, $running),
+            ];
+            $running += $net;
+        }
+
+        $totalDispensed = array_sum(array_column($timeline, 'dispensed'));
+        $totalStockIn = array_sum(array_column($timeline, 'stock_in'));
+        $netChange = $totalStockIn - $totalDispensed;
+
+        return response()->json([
+            'direction' => $netChange >= 0 ? 'up' : 'down',
+            'net_change' => $netChange,
+            'total_dispensed' => $totalDispensed,
+            'total_restocked' => $totalStockIn,
+            'current_total_stock' => $totalStock,
+            'timeline' => $timeline,
+        ]);
+    }
+
+    public function getRequisitions(Request $request)
+    {
+        $status = $request->query('status');
+        $query = MedicineRequisition::with(['medicine', 'requester'])
+            ->when($status, fn($q) => $q->where('status', $status))
+            ->orderBy('created_at', 'desc');
+
+        return response()->json($query->paginate(25));
+    }
+
+    public function storeRequisition(Request $request)
+    {
+        $validated = $request->validate([
+            'medicine_id' => 'required|exists:medicines,id',
+            'quantity_requested' => 'required|integer|min:1|max:50000',
+            'priority' => 'nullable|string|in:normal,urgent,critical',
+            'reason' => 'nullable|string|max:255',
+            'remarks' => 'nullable|string|max:1000',
+        ]);
+
+        $medicine = Medicine::findOrFail($validated['medicine_id']);
+        $user = auth()->user();
+
+        $requisition = MedicineRequisition::create([
+            'medicine_id' => $medicine->id,
+            'quantity_requested' => $validated['quantity_requested'],
+            'unit' => $medicine->unit ?: 'Tablet',
+            'priority' => $validated['priority'] ?? 'normal',
+            'reason' => $validated['reason'] ?? 'Clinic stock replenishment',
+            'status' => 'pending',
+            'requested_by' => $user?->id,
+            'requester_name' => $user?->name ?? 'Clinic Personnel',
+            'date_requested' => now()->toDateString(),
+            'remarks' => $validated['remarks'] ?? null,
+        ]);
+
+        return response()->json([
+            'message' => 'Medicine requisition request submitted successfully.',
+            'requisition' => $requisition->load('medicine'),
+        ], 201);
+    }
+
+    public function updateRequisitionStatus(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'status' => 'required|string|in:pending,approved,fulfilled,cancelled',
+        ]);
+
+        $requisition = MedicineRequisition::findOrFail($id);
+        $requisition->update(['status' => $validated['status']]);
+
+        return response()->json([
+            'message' => "Requisition request marked as {$validated['status']}.",
+            'requisition' => $requisition->load('medicine'),
         ]);
     }
 }
