@@ -103,6 +103,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/medicines/trashed', [MedicineController::class, 'trashed']);
     Route::post('/medicines/{id}/restore', [MedicineController::class, 'restore']);
     Route::delete('/medicines/{id}/force', [MedicineController::class, 'forceDelete']);
+    Route::get('/medicines/batches', [MedicineController::class, 'batches']);
+    Route::post('/medicines/batches', [MedicineController::class, 'storeBatch']);
+    Route::post('/medicines/dispense', [MedicineController::class, 'dispense']);
+    Route::get('/medicines/preview-dispense', [MedicineController::class, 'previewDispense']);
+    Route::get('/medicines/transactions', [MedicineController::class, 'transactions']);
 
     Route::apiResource('medicines', MedicineController::class);
     Route::post('/ai-chat', [AiChatbotController::class, 'chat']);

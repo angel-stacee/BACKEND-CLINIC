@@ -274,52 +274,28 @@ class ClinicVisitController extends Controller
         $validated['department'] = $this->resolveDepartment($validated);
 
         $visit = DB::transaction(function () use ($validated) {
+            $createdVisit = ClinicVisit::create($validated);
 
             if (! empty($validated['medicine_id'])) {
-
-                $medicine = Medicine::where(
-                    'id',
-                    $validated['medicine_id']
-                )
-                    ->lockForUpdate()
-                    ->first();
-
+                $medicine = Medicine::where('id', $validated['medicine_id'])->lockForUpdate()->first();
                 if (! $medicine) {
                     throw ValidationException::withMessages([
-                        'medicine_id' => [
-                            'Selected medicine was not found.',
-                        ],
-                    ]);
-                }
-
-                if ($medicine->expiration_date && \Carbon\Carbon::parse($medicine->expiration_date)->isPast()) {
-                    $expDate = \Carbon\Carbon::parse($medicine->expiration_date)->format('M d, Y');
-                    throw ValidationException::withMessages([
-                        'medicine_id' => [
-                            "Cannot dispense '{$medicine->medicine_name}' because it has expired on {$expDate}. Please review and remove from active inventory.",
-                        ],
+                        'medicine_id' => ['Selected medicine was not found.'],
                     ]);
                 }
 
                 $quantity = (int) $validated['medicine_quantity'];
+                $recipient = $this->resolveRecipientData($validated);
 
-                $currentStock = (int) $medicine->stock;
-
-                if ($currentStock < $quantity) {
-                    throw ValidationException::withMessages([
-                        'medicine_quantity' => [
-                            "Insufficient stock for {$medicine->medicine_name}. Available stock: {$currentStock}.",
-                        ],
-                    ]);
-                }
-
-                $medicine->stock =
-                    $currentStock - $quantity;
-
-                $medicine->save();
+                app(\App\Services\MedicineInventoryService::class)->issueStock(
+                    $medicine,
+                    $quantity,
+                    $recipient,
+                    $createdVisit
+                );
             }
 
-            return ClinicVisit::create($validated);
+            return $createdVisit;
         });
 
         try {
@@ -491,92 +467,24 @@ class ClinicVisitController extends Controller
                 )
                 : 0;
 
-            $medicineIds = collect([
-                $oldMedicineId,
-                $newMedicineId,
-            ])
-                ->filter()
-                ->unique()
-                ->sort()
-                ->values();
+            $inventoryService = app(\App\Services\MedicineInventoryService::class);
 
-            $medicines = $medicineIds->isEmpty()
-                ? collect()
-                : Medicine::whereIn(
-                    'id',
-                    $medicineIds
-                )
-                    ->lockForUpdate()
-                    ->get()
-                    ->keyBy('id');
-
-            if (
-                $oldMedicineId &&
-                $oldQuantity > 0
-            ) {
-
-                $oldMedicine =
-                    $medicines->get(
-                        $oldMedicineId
-                    );
-
-                if (! $oldMedicine) {
-                    throw ValidationException::withMessages([
-                        'medicine_id' => [
-                            'The previously selected medicine no longer exists.',
-                        ],
-                    ]);
-                }
-
-                $oldMedicine->stock =
-                    (int) $oldMedicine->stock +
-                    $oldQuantity;
-
-                $oldMedicine->save();
+            if ($oldMedicineId && $oldQuantity > 0 && ($oldMedicineId !== $newMedicineId || $oldQuantity !== $newQuantity)) {
+                $inventoryService->restoreStock((int) $oldMedicineId, $oldQuantity, $clinicVisit);
             }
 
-            if (
-                $newMedicineId &&
-                $newQuantity > 0
-            ) {
-
-                $newMedicine =
-                    $medicines->get(
-                        $newMedicineId
-                    );
-
+            if ($newMedicineId && $newQuantity > 0 && ($oldMedicineId !== $newMedicineId || $oldQuantity !== $newQuantity)) {
+                $newMedicine = Medicine::where('id', $newMedicineId)->lockForUpdate()->first();
                 if (! $newMedicine) {
                     throw ValidationException::withMessages([
-                        'medicine_id' => [
-                            'Selected medicine was not found.',
-                        ],
+                        'medicine_id' => ['Selected medicine was not found.'],
                     ]);
                 }
-
-                $availableStock =
-                    (int) $newMedicine->stock;
-
-                if (
-                    $availableStock <
-                    $newQuantity
-                ) {
-                    throw ValidationException::withMessages([
-                        'medicine_quantity' => [
-                            "Insufficient stock for {$newMedicine->medicine_name}. Available stock: {$availableStock}.",
-                        ],
-                    ]);
-                }
-
-                $newMedicine->stock =
-                    $availableStock -
-                    $newQuantity;
-
-                $newMedicine->save();
+                $recipient = $this->resolveRecipientData($validated);
+                $inventoryService->issueStock($newMedicine, $newQuantity, $recipient, $clinicVisit);
             }
 
-            $clinicVisit->update(
-                $validated
-            );
+            $clinicVisit->update($validated);
         });
 
         return response()->json(
@@ -592,45 +500,18 @@ class ClinicVisitController extends Controller
         );
     }
 
-    public function destroy(
-        ClinicVisit $clinicVisit
-    ) {
-        DB::transaction(
-            function () use ($clinicVisit) {
+    public function destroy(ClinicVisit $clinicVisit)
+    {
+        DB::transaction(function () use ($clinicVisit) {
+            $medicineId = $clinicVisit->medicine_id;
+            $quantity = (int) ($clinicVisit->medicine_quantity ?? 0);
 
-                $medicineId =
-                    $clinicVisit->medicine_id;
-
-                $quantity = (int) (
-                    $clinicVisit->medicine_quantity ?? 0
-                );
-
-                if (
-                    $medicineId &&
-                    $quantity > 0
-                ) {
-
-                    $medicine =
-                        Medicine::where(
-                            'id',
-                            $medicineId
-                        )
-                            ->lockForUpdate()
-                            ->first();
-
-                    if ($medicine) {
-
-                        $medicine->stock =
-                            (int) $medicine->stock +
-                            $quantity;
-
-                        $medicine->save();
-                    }
-                }
-
-                $clinicVisit->delete();
+            if ($medicineId && $quantity > 0) {
+                app(\App\Services\MedicineInventoryService::class)->restoreStock((int) $medicineId, $quantity, $clinicVisit);
             }
-        );
+
+            $clinicVisit->delete();
+        });
 
         return response()->json([
             'message' => 'Clinic visit moved to trash.',
@@ -909,17 +790,70 @@ class ClinicVisitController extends Controller
         }
 
         if (! $request->has('patient_search')) {
+            $today = \Carbon\Carbon::today()->toDateString();
+            $soonThreshold = \Carbon\Carbon::today()->addDays(30)->toDateString();
+            $nearThreshold = \Carbon\Carbon::today()->addDays(90)->toDateString();
+
             $payload['medicines'] = Medicine::query()
                 ->select(['id', 'medicine_name', 'treatment_type', 'unit', 'stock', 'minimum_stock', 'expiration_date'])
+                ->with(['activeBatches' => function ($q) use ($today) {
+                    $q->where('current_quantity', '>', 0)
+                        ->where(function ($sub) use ($today) {
+                            $sub->whereNull('expiration_date')->orWhere('expiration_date', '>=', $today);
+                        })
+                        ->orderBy('expiration_date', 'asc')
+                        ->orderBy('date_added', 'asc');
+                }])
                 ->when($medicineSearch !== '', fn (Builder $query) => $query->where('medicine_name', 'like', '%'.$medicineSearch.'%'))
-                ->where(function (Builder $query) {
+                ->where(function (Builder $query) use ($today) {
                     $query->whereNull('expiration_date')
-                        ->orWhere('expiration_date', '>', \Carbon\Carbon::today()->toDateString());
+                        ->orWhere('expiration_date', '>=', $today);
                 })
                 ->where('stock', '>', 0)
                 ->orderBy('medicine_name')
-                ->limit(10)
-                ->get();
+                ->limit(50)
+                ->get()
+                ->map(function ($med) use ($today, $soonThreshold, $nearThreshold) {
+                    $fefoBatch = $med->activeBatches->first();
+                    $expDate = $fefoBatch?->expiration_date?->toDateString() ?? ($med->expiration_date ? \Carbon\Carbon::parse($med->expiration_date)->toDateString() : null);
+
+                    $status = 'Good';
+                    $days = null;
+                    if ($expDate) {
+                        $days = (int) \Carbon\Carbon::today()->diffInDays(\Carbon\Carbon::parse($expDate), false);
+                        if ($days < 0) {
+                            $status = 'Expired';
+                        } elseif ($days <= 30) {
+                            $status = 'Expiring Soon';
+                        } elseif ($days <= 90) {
+                            $status = 'Near Expiration';
+                        } else {
+                            $status = 'Good';
+                        }
+                    }
+
+                    return [
+                        'id' => $med->id,
+                        'medicine_name' => $med->medicine_name,
+                        'treatment_type' => $med->treatment_type,
+                        'unit' => $med->unit,
+                        'stock' => $med->stock,
+                        'minimum_stock' => $med->minimum_stock,
+                        'expiration_date' => $expDate,
+                        'days_until_expiration' => $days,
+                        'expiration_status' => $status,
+                        'fefo_batch_number' => $fefoBatch?->batch_number ?? ($expDate ? 'BATCH-DEFAULT' : 'N/A'),
+                        'fefo_batch_quantity' => $fefoBatch?->current_quantity ?? $med->stock,
+                        'active_batches' => $med->activeBatches->map(fn ($b) => [
+                            'id' => $b->id,
+                            'batch_number' => $b->batch_number,
+                            'current_quantity' => $b->current_quantity,
+                            'expiration_date' => $b->expiration_date?->toDateString(),
+                            'status' => $b->status,
+                            'days_until_expiration' => $b->days_until_expiration,
+                        ]),
+                    ];
+                });
         }
 
         if (! $request->has('patient_search') && ! $request->has('medicine_search')) {
@@ -1007,5 +941,45 @@ class ClinicVisitController extends Controller
             'BLIS' => 'Department of Library and Information Science (BLIS)',
             default => $course,
         };
+    }
+
+    protected function resolveRecipientData(array $validated): array
+    {
+        if (! empty($validated['student_id'])) {
+            $student = Student::find($validated['student_id']);
+            return [
+                'type' => 'student',
+                'id' => $student?->student_id ?? (string) $validated['student_id'],
+                'name' => $student ? "{$student->first_name} {$student->last_name}" : 'Student',
+                'notes' => 'Dispensed via Clinic Visit',
+            ];
+        }
+
+        if (! empty($validated['faculty_id'])) {
+            $faculty = Faculty::find($validated['faculty_id']);
+            return [
+                'type' => 'faculty',
+                'id' => $faculty?->employee_id ?? (string) $validated['faculty_id'],
+                'name' => $faculty ? "{$faculty->first_name} {$faculty->last_name}" : 'Faculty',
+                'notes' => 'Dispensed via Clinic Visit',
+            ];
+        }
+
+        if (! empty($validated['staff_id'])) {
+            $staff = Staff::find($validated['staff_id']);
+            return [
+                'type' => 'staff',
+                'id' => $staff?->staff_id ?? $staff?->employee_id ?? (string) $validated['staff_id'],
+                'name' => $staff ? "{$staff->first_name} {$staff->last_name}" : 'Staff',
+                'notes' => 'Dispensed via Clinic Visit',
+            ];
+        }
+
+        return [
+            'type' => 'other',
+            'id' => null,
+            'name' => 'Walk-in Patient',
+            'notes' => 'Dispensed via Clinic Visit',
+        ];
     }
 }
