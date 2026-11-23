@@ -34,6 +34,7 @@ class MedicineController extends Controller
 
         $medicines = Medicine::query()
             ->withCount(['batches', 'activeBatches'])
+            ->with(['activeBatches' => fn ($q) => $q->orderBy('expiration_date')->orderBy('date_added')])
             ->select([
                 'id',
                 'medicine_name',
@@ -382,9 +383,30 @@ class MedicineController extends Controller
         ]);
 
         $initialStock = (int) $validated['stock'];
-        $validated['stock'] = 0; // Will be set by recalculateStock() after batch creation
+        $cleanName = trim($validated['medicine_name']);
 
-        $medicine = Medicine::create($validated);
+        // Check if medicine with same name already exists (case-insensitive)
+        $existing = Medicine::whereRaw('LOWER(TRIM(medicine_name)) = ?', [strtolower($cleanName)])->first();
+
+        if ($existing) {
+            $medicine = $existing;
+            if (! empty($validated['treatment_type'])) {
+                $medicine->treatment_type = $validated['treatment_type'];
+            }
+            if (! empty($validated['unit'])) {
+                $medicine->unit = $validated['unit'];
+            }
+            if (isset($validated['minimum_stock'])) {
+                $medicine->minimum_stock = $validated['minimum_stock'];
+            }
+            if (! empty($validated['description']) && empty($medicine->description)) {
+                $medicine->description = $validated['description'];
+            }
+            $medicine->save();
+        } else {
+            $validated['stock'] = 0; // Will be set by recalculateStock() after batch creation
+            $medicine = Medicine::create($validated);
+        }
 
         if ($initialStock > 0) {
             $this->inventoryService->addBatch([
@@ -394,11 +416,10 @@ class MedicineController extends Controller
                 'date_added' => $validated['date_added'] ?? now()->toDateString(),
                 'expiration_date' => $validated['expiration_date'] ?? now()->addYears(2)->toDateString(),
                 'supplier' => $validated['supplier'] ?? null,
-                'remarks' => $validated['remarks'] ?? 'Initial stock entry',
+                'remarks' => $validated['remarks'] ?? ($existing ? 'Stock addition to existing medicine' : 'Initial stock entry'),
             ]);
         } else {
-            $medicine->stock = 0;
-            $medicine->save();
+            $medicine->recalculateStock();
         }
 
         try {
@@ -406,8 +427,11 @@ class MedicineController extends Controller
         } catch (\Throwable) {}
 
         return response()->json([
-            'message' => 'Medicine added successfully.',
-            'medicine' => $medicine->fresh()->load('batches'),
+            'message' => $existing
+                ? "Added batch of {$initialStock} {$medicine->unit}(s) to existing {$medicine->medicine_name}."
+                : 'Medicine added successfully.',
+            'medicine' => $medicine->fresh()->load(['batches', 'activeBatches']),
+            'is_existing' => (bool) $existing,
         ], 201);
     }
 
