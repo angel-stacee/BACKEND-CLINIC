@@ -142,6 +142,13 @@ class MedicineController extends Controller
             ->limit(10)
             ->get(['id', 'medicine_name', 'expiration_date', 'stock', 'unit']);
 
+        $earliestExpDate = Medicine::query()
+            ->whereNotNull('expiration_date')
+            ->where('expiration_date', '>=', $today)
+            ->where('stock', '>', 0)
+            ->orderBy('expiration_date')
+            ->value('expiration_date');
+
         $payload = $medicines->toArray();
         $payload['summary'] = [
             'total_medicines' => $medicines->total(),
@@ -152,6 +159,7 @@ class MedicineController extends Controller
             'expiring_soon_count' => (int) ($summary->expiring_soon_count ?? 0),
             'near_expiration_count' => (int) ($summary->near_expiration_count ?? 0),
             'good_count' => (int) ($summary->good_count ?? 0),
+            'earliest_expiration_date' => $earliestExpDate ? \Carbon\Carbon::parse($earliestExpDate)->toDateString() : null,
             'total_batches' => (int) ($batchStats->total_batches ?? 0),
             'expired_batch_count' => (int) ($batchStats->expired_batch_count ?? 0),
             'expiring_soon_batch_count' => (int) ($batchStats->expiring_soon_batch_count ?? 0),
