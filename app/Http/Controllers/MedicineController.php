@@ -31,8 +31,9 @@ class MedicineController extends Controller
         $search = trim($validated['search'] ?? '');
         $statusFilter = $validated['status_filter'] ?? 'all';
         $today = now()->toDateString();
-        $soonThreshold = now()->addDays(30)->toDateString();
-        $nearThreshold = now()->addDays(90)->toDateString();
+        // Expiring soon is strictly within 3 days before expiration
+        $soonThreshold = now()->addDays(3)->toDateString();
+        $nearThreshold = now()->addDays(30)->toDateString();
 
         $medicines = Medicine::query()
             ->withCount(['batches', 'activeBatches'])
@@ -212,8 +213,9 @@ class MedicineController extends Controller
         $search = trim($validated['search'] ?? '');
         $status = $validated['status'] ?? 'all';
         $today = now()->toDateString();
-        $soonThreshold = now()->addDays(30)->toDateString();
-        $nearThreshold = now()->addDays(90)->toDateString();
+        // Expiring soon is strictly within 3 days before expiration
+        $soonThreshold = now()->addDays(3)->toDateString();
+        $nearThreshold = now()->addDays(30)->toDateString();
         $sortBy = $validated['sort_by'] ?? 'fefo';
 
         $query = MedicineBatch::query()
@@ -554,8 +556,8 @@ class MedicineController extends Controller
     public function mostUsed(Request $request)
     {
         $today = Carbon::today()->toDateString();
-        $soonThreshold = Carbon::today()->addDays(30)->toDateString();
-        $nearThreshold = Carbon::today()->addDays(90)->toDateString();
+        $soonThreshold = Carbon::today()->addDays(3)->toDateString();
+        $nearThreshold = Carbon::today()->addDays(30)->toDateString();
 
         // 1. Group dispensing by medicine from ClinicVisit
         $dispensedByVisit = ClinicVisit::query()

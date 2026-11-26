@@ -791,8 +791,8 @@ class ClinicVisitController extends Controller
 
         if (! $request->has('patient_search')) {
             $today = \Carbon\Carbon::today()->toDateString();
-            $soonThreshold = \Carbon\Carbon::today()->addDays(30)->toDateString();
-            $nearThreshold = \Carbon\Carbon::today()->addDays(90)->toDateString();
+            $soonThreshold = \Carbon\Carbon::today()->addDays(3)->toDateString();
+            $nearThreshold = \Carbon\Carbon::today()->addDays(30)->toDateString();
 
             $payload['medicines'] = Medicine::query()
                 ->select(['id', 'medicine_name', 'treatment_type', 'unit', 'stock', 'minimum_stock', 'expiration_date'])
