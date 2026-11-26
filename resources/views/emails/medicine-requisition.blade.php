@@ -13,14 +13,25 @@
                     
                     <!-- Header -->
                     <tr>
-                        <td style="background-color: #70091f; padding: 24px 28px; text-align: left;">
+                        <td style="background-color: #70091f; padding: 22px 28px; text-align: left;">
                             <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                                 <tr>
-                                    <td>
+                                    @php
+                                        $logoPath = public_path('images/tcc-logo.png');
+                                        $hasLogo = file_exists($logoPath);
+                                    @endphp
+                                    @if($hasLogo)
+                                        <td width="64" valign="middle" style="padding-right: 16px;">
+                                            <div style="background-color: #ffffff; border-radius: 50%; padding: 3px; width: 56px; height: 56px; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+                                                <img src="{{ $message->embed($logoPath) }}" alt="TCC Seal" width="56" height="56" style="display: block; border-radius: 50%; object-fit: contain;" />
+                                            </div>
+                                        </td>
+                                    @endif
+                                    <td valign="middle">
                                         <p style="margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #f8a598;">
                                             Tagoloan Community College
                                         </p>
-                                        <h1 style="margin: 4px 0 0 0; font-size: 20px; font-weight: 800; color: #ffffff;">
+                                        <h1 style="margin: 3px 0 0 0; font-size: 20px; font-weight: 800; color: #ffffff; line-height: 1.2;">
                                             Clinic &amp; Health Services
                                         </h1>
                                         <p style="margin: 4px 0 0 0; font-size: 13px; color: #f4ecdf; opacity: 0.9;">
@@ -153,12 +164,17 @@
 
                     <!-- Footer -->
                     <tr>
-                        <td style="background-color: #f5efe6; border-top: 1px solid #e7ded4; padding: 20px 28px; text-align: center;">
+                        <td style="background-color: #f5efe6; border-top: 1px solid #e7ded4; padding: 22px 28px; text-align: center;">
+                            @if($hasLogo)
+                                <div style="margin-bottom: 10px;">
+                                    <img src="{{ $message->embed($logoPath) }}" alt="TCC Seal" width="34" height="34" style="display: inline-block; vertical-align: middle; border-radius: 50%;" />
+                                </div>
+                            @endif
                             <p style="margin: 0; font-size: 12px; font-weight: 700; color: #70091f;">
                                 Tagoloan Community College &bull; Health Services Unit
                             </p>
                             <p style="margin: 4px 0 0 0; font-size: 11px; color: #a8a29e;">
-                                This is an automated email from the TCC Clinic Management System. Please do not reply directly to this email unless directed.
+                                This is an automated email from the TCC Clinic Management System.
                             </p>
                         </td>
                     </tr>
