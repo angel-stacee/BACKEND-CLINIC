@@ -21,11 +21,14 @@ class MedicineRequisition extends Model
         'requester_name',
         'date_requested',
         'remarks',
+        'recipient_email',
+        'email_sent',
     ];
 
     protected $casts = [
         'quantity_requested' => 'integer',
         'date_requested' => 'date:Y-m-d',
+        'email_sent' => 'boolean',
     ];
 
     public function medicine(): BelongsTo

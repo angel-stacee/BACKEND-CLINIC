@@ -11,6 +11,8 @@ use App\Services\MedicineInventoryService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class MedicineController extends Controller
 {
@@ -891,10 +893,14 @@ class MedicineController extends Controller
             'priority' => 'nullable|string|in:normal,urgent,critical',
             'reason' => 'nullable|string|max:255',
             'remarks' => 'nullable|string|max:1000',
+            'recipient_email' => 'nullable|string|max:1000',
+            'send_copy_to_nurse' => 'nullable|boolean',
         ]);
 
         $medicine = Medicine::findOrFail($validated['medicine_id']);
         $user = auth()->user();
+
+        $rawRecipientEmail = isset($validated['recipient_email']) ? trim($validated['recipient_email']) : null;
 
         $requisition = MedicineRequisition::create([
             'medicine_id' => $medicine->id,
@@ -907,11 +913,68 @@ class MedicineController extends Controller
             'requester_name' => $user?->name ?? 'Clinic Personnel',
             'date_requested' => now()->toDateString(),
             'remarks' => $validated['remarks'] ?? null,
+            'recipient_email' => $rawRecipientEmail,
+            'email_sent' => false,
         ]);
 
+        // Process recipient emails for notification
+        $recipients = [];
+        if (!empty($rawRecipientEmail)) {
+            $tokens = preg_split('/[,;\s]+/', $rawRecipientEmail);
+            foreach ($tokens as $token) {
+                $email = trim($token);
+                if (filter_var($email, FILTER_VALIDATE_EMAIL) && !in_array($email, $recipients)) {
+                    $recipients[] = $email;
+                }
+            }
+        }
+
+        // Include attending nurse copy if requested or user email available
+        if (!empty($validated['send_copy_to_nurse']) && $user && !empty($user->email)) {
+            if (filter_var($user->email, FILTER_VALIDATE_EMAIL) && !in_array($user->email, $recipients)) {
+                $recipients[] = $user->email;
+            }
+        }
+
+        $emailSent = false;
+        $emailError = null;
+
+        if (!empty($recipients)) {
+            try {
+                $mailData = [
+                    'requisition' => $requisition,
+                    'medicine' => $medicine,
+                    'requester_name' => $requisition->requester_name,
+                    'requester_email' => $user?->email,
+                    'date_time' => now()->format('F j, Y - g:i A'),
+                    'ref_number' => 'REQ-' . date('Ymd') . '-' . str_pad((string)$requisition->id, 4, '0', STR_PAD_LEFT),
+                ];
+
+                $priorityLabel = strtoupper($requisition->priority);
+                $subject = "[TCC Clinic] [{$priorityLabel}] Medicine Requisition: {$medicine->medicine_name} ({$requisition->quantity_requested} {$requisition->unit})";
+
+                Mail::send('emails.medicine-requisition', $mailData, function ($message) use ($recipients, $subject) {
+                    $first = array_shift($recipients);
+                    $message->to($first)->subject($subject);
+                    if (!empty($recipients)) {
+                        $message->cc($recipients);
+                    }
+                });
+
+                $emailSent = true;
+                $requisition->update(['email_sent' => true]);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to dispatch medicine requisition email: ' . $e->getMessage());
+                $emailError = $e->getMessage();
+            }
+        }
+
         return response()->json([
-            'message' => 'Medicine requisition request submitted successfully.',
+            'message' => 'Medicine requisition request submitted successfully.' . ($emailSent ? ' Notification email dispatched.' : ''),
             'requisition' => $requisition->load('medicine'),
+            'email_sent' => $emailSent,
+            'email_recipients' => $recipients,
+            'email_error' => $emailError,
         ], 201);
     }
 
