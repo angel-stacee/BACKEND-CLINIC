@@ -139,10 +139,12 @@ class MedicineController extends Controller
             ->limit(10)
             ->get(['id', 'medicine_name', 'expiration_date', 'stock', 'unit']);
 
+        // Fetch medicines expiring within 3 days for immediate alert notifications
+        $threeDaysNotificationThreshold = now()->addDays(3)->toDateString();
         $expiringSoonItems = Medicine::query()
             ->whereNotNull('expiration_date')
             ->where('expiration_date', '>=', $today)
-            ->where('expiration_date', '<=', $soonThreshold)
+            ->where('expiration_date', '<=', $threeDaysNotificationThreshold)
             ->orderBy('expiration_date')
             ->limit(10)
             ->get(['id', 'medicine_name', 'expiration_date', 'stock', 'unit']);

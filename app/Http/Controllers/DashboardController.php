@@ -162,7 +162,8 @@ class DashboardController extends Controller
             ->take(5);
 
         $today = now()->toDateString();
-        $soonDate = now()->addDays(30)->toDateString();
+        // Only alert/notify for medicines within 3 days before expiration
+        $soonDate = now()->addDays(3)->toDateString();
 
         $expiredMedicines = Medicine::query()
             ->whereNotNull('expiration_date')

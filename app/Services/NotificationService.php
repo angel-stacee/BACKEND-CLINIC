@@ -88,14 +88,14 @@ class NotificationService
     }
 
     /**
-     * 2. Expired Medicine Alerts
+     * 2. Expired & Expiring Soon Medicine Alerts (Within 3 Days)
      */
     public function syncExpiredMedicineAlerts(string $today): void
     {
         $expiredMedicines = Medicine::query()
             ->whereNull('deleted_at')
             ->whereNotNull('expiration_date')
-            ->where('expiration_date', '<=', $today)
+            ->where('expiration_date', '<', $today)
             ->get();
 
         foreach ($expiredMedicines as $med) {
@@ -115,6 +115,44 @@ class NotificationService
                         'medicine_id' => $med->id,
                         'medicine_name' => $med->medicine_name,
                         'expiration_date' => $expDateStr,
+                    ],
+                    'unique_key' => $key,
+                    'is_read' => false,
+                ]);
+            }
+        }
+
+        // Only notify if within 3 days before expiration (today to today + 3 days)
+        $threeDaysLater = Carbon::parse($today)->addDays(3)->toDateString();
+        $expiringIn3Days = Medicine::query()
+            ->whereNull('deleted_at')
+            ->whereNotNull('expiration_date')
+            ->where('expiration_date', '>=', $today)
+            ->where('expiration_date', '<=', $threeDaysLater)
+            ->get();
+
+        foreach ($expiringIn3Days as $med) {
+            $expCarbon = Carbon::parse($med->expiration_date);
+            $expDateStr = $expCarbon->format('Y-m-d');
+            $expFormatted = $expCarbon->format('M d, Y');
+            $daysLeft = Carbon::parse($today)->diffInDays($expCarbon, false);
+            $daysLeft = max(0, (int)$daysLeft);
+            $dayLabel = $daysLeft === 0 ? "today" : ($daysLeft === 1 ? "tomorrow (in 1 day)" : "in {$daysLeft} days");
+            $key = "expiring_med_3d_{$med->id}_{$expDateStr}";
+
+            $exists = ClinicNotification::where('unique_key', $key)->exists();
+
+            if (! $exists) {
+                ClinicNotification::create([
+                    'category' => 'expired_medicine',
+                    'type' => 'warning',
+                    'title' => "Expiring Soon (in {$daysLeft}d): {$med->medicine_name}",
+                    'description' => "{$med->medicine_name} will expire {$dayLabel} on {$expFormatted}. Please plan replenishment.",
+                    'metadata' => [
+                        'medicine_id' => $med->id,
+                        'medicine_name' => $med->medicine_name,
+                        'expiration_date' => $expDateStr,
+                        'days_remaining' => $daysLeft,
                     ],
                     'unique_key' => $key,
                     'is_read' => false,
