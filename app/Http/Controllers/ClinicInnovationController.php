@@ -182,39 +182,45 @@ class ClinicInnovationController extends Controller
         $filename = "TCC-Clinic-QR-{$identifier}.png";
         $logoPath = public_path('images/tcc-logo.png');
 
-        Mail::send([], [], function ($message) use ($validated, $fullName, $pngBinary, $filename, $logoPath, $safeName, $safeId, $safeRole, $safeToken) {
-            $logoImgTag = '';
-            if (is_file($logoPath)) {
-                $logoCid = $message->embed($logoPath);
-                $logoImgTag = "<img src=\"{$logoCid}\" alt=\"TCC Logo\" style=\"width: 56px; height: 56px; object-fit: contain; border-radius: 50%; background: #ffffff; padding: 4px; margin-bottom: 8px;\" />";
-            }
+        try {
+            Mail::send([], [], function ($message) use ($validated, $fullName, $pngBinary, $filename, $logoPath, $safeName, $safeId, $safeRole, $safeToken) {
+                $logoImgTag = '';
+                if (is_file($logoPath)) {
+                    $logoCid = $message->embed($logoPath);
+                    $logoImgTag = "<img src=\"{$logoCid}\" alt=\"TCC Logo\" style=\"width: 56px; height: 56px; object-fit: contain; border-radius: 50%; background: #ffffff; padding: 4px; margin-bottom: 8px;\" />";
+                }
 
-            $html = <<<HTML
-            <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 520px; margin: 0 auto; border: 1px solid #e8dfd4; border-radius: 12px; overflow: hidden; background: #ffffff;">
-                <div style="background: #70091f; color: #ffffff; padding: 20px 24px; text-align: center;">
-                    {$logoImgTag}
-                    <h2 style="margin: 0; font-size: 18px;">TCC CLINIC MANAGEMENT SYSTEM</h2>
-                    <p style="margin: 4px 0 0; font-size: 12px; opacity: 0.9;">Tagoloan Community College Health Services</p>
-                </div>
-                <div style="padding: 24px; color: #1c1917;">
-                    <p style="margin: 0 0 12px; font-size: 14px;">Hello <strong>{$safeName}</strong>,</p>
-                    <p style="margin: 0 0 16px; font-size: 13px; color: #57534e; line-height: 1.5;">
-                        Attached is your personal <strong>TCC Clinic QR Identification</strong> ({$safeRole} ID: <strong>{$safeId}</strong>).
-                        Present this QR code to the clinic nurse during your visit for fast check-in.
-                    </p>
-                    <div style="background: #fcfaf6; border: 1px solid #e8dfd4; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #57534e;">
-                        <div><strong>Token:</strong> <span style="font-family: monospace;">{$safeToken}</span></div>
-                        <div style="margin-top: 4px; font-size: 11px; color: #15803d;">This QR code contains no personal or medical information.</div>
+                $html = <<<HTML
+                <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 520px; margin: 0 auto; border: 1px solid #e8dfd4; border-radius: 12px; overflow: hidden; background: #ffffff;">
+                    <div style="background: #70091f; color: #ffffff; padding: 20px 24px; text-align: center;">
+                        {$logoImgTag}
+                        <h2 style="margin: 0; font-size: 18px;">TCC CLINIC MANAGEMENT SYSTEM</h2>
+                        <p style="margin: 4px 0 0; font-size: 12px; opacity: 0.9;">Tagoloan Community College Health Services</p>
+                    </div>
+                    <div style="padding: 24px; color: #1c1917;">
+                        <p style="margin: 0 0 12px; font-size: 14px;">Hello <strong>{$safeName}</strong>,</p>
+                        <p style="margin: 0 0 16px; font-size: 13px; color: #57534e; line-height: 1.5;">
+                            Attached is your personal <strong>TCC Clinic QR Identification</strong> ({$safeRole} ID: <strong>{$safeId}</strong>).
+                            Present this QR code to the clinic nurse during your visit for fast check-in.
+                        </p>
+                        <div style="background: #fcfaf6; border: 1px solid #e8dfd4; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #57534e;">
+                            <div><strong>Token:</strong> <span style="font-family: monospace;">{$safeToken}</span></div>
+                            <div style="margin-top: 4px; font-size: 11px; color: #15803d;">This QR code contains no personal or medical information.</div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            HTML;
+                HTML;
 
-            $message->to($validated['email'], $fullName)
-                ->subject('Your TCC Clinic QR Identification')
-                ->html($html)
-                ->attachData($pngBinary, $filename, ['mime' => 'image/png']);
-        });
+                $message->to($validated['email'], $fullName)
+                    ->subject('Your TCC Clinic QR Identification')
+                    ->html($html)
+                    ->attachData($pngBinary, $filename, ['mime' => 'image/png']);
+            });
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Failed to send email: ' . $e->getMessage(),
+            ], 500);
+        }
 
         AuditLogService::record(
             'qr.send_email',
