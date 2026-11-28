@@ -24,10 +24,14 @@ class ClinicVisit extends Model
         'medicine_id',
         'medicine_quantity',
         'remarks',
+        'follow_up_date',
+        'follow_up_status',
+        'follow_up_notes',
     ];
 
     protected $casts = [
         'visit_date' => 'date:Y-m-d',
+        'follow_up_date' => 'date:Y-m-d',
         'medicine_quantity' => 'integer',
     ];
 

@@ -85,14 +85,21 @@ class StudentController extends Controller
     {
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
+            'sex' => ['nullable', 'string', 'max:20'],
+            'course' => ['nullable', 'string', 'max:100'],
+            'sort_by' => ['nullable', 'in:newest,oldest,name_asc,name_desc,id_asc'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $search = trim($validated['search'] ?? '');
+        $sex = trim((string) ($validated['sex'] ?? ''));
+        $course = trim((string) ($validated['course'] ?? ''));
+        $sortBy = $validated['sort_by'] ?? 'newest';
 
         $query = Student::query()
             ->select([
                 'id',
                 'student_id',
+                'qr_token',
                 'first_name',
                 'middle_name',
                 'last_name',
@@ -140,8 +147,16 @@ class StudentController extends Controller
                     }
                 });
             })
-            ->orderByDesc('created_at')
-            ->orderByDesc('id');
+            ->when($sex !== '' && strtolower($sex) !== 'all', fn (Builder $query) => $query->whereRaw('LOWER(sex) = ?', [strtolower($sex)]))
+            ->when($course !== '' && strtolower($course) !== 'all', fn (Builder $query) => $query->where('course', $course));
+
+        match ($sortBy) {
+            'oldest' => $query->orderBy('created_at')->orderBy('id'),
+            'name_asc' => $query->orderBy('last_name')->orderBy('first_name'),
+            'name_desc' => $query->orderByDesc('last_name')->orderByDesc('first_name'),
+            'id_asc' => $query->orderBy('student_id'),
+            default => $query->orderByDesc('created_at')->orderByDesc('id'),
+        };
 
         return response()->json(
             $query->paginate($validated['per_page'] ?? 25)->withQueryString()
@@ -196,9 +211,36 @@ class StudentController extends Controller
 
     public function show(Student $student)
     {
+        if (empty($student->qr_token)) {
+            $student->qr_token = Student::generateQrToken();
+            $student->saveQuietly();
+        }
+
         return response()->json(
             $student->load('clinicVisits.nurse')
         );
+    }
+
+    public function regenerateQr(Request $request, Student $student)
+    {
+        $student->qr_token = Student::generateQrToken();
+        $student->save();
+
+        \App\Services\AuditLogService::record(
+            'student.qr_regenerated',
+            "Regenerated QR token for student #{$student->id}",
+            'student',
+            $student->id,
+            [],
+            $request->user(),
+            $request
+        );
+
+        return response()->json([
+            'message' => 'Student QR code regenerated successfully. Previous QR codes are now invalid.',
+            'qr_token' => $student->qr_token,
+            'student' => $student->fresh(),
+        ]);
     }
 
     public function update(Request $request, Student $student)

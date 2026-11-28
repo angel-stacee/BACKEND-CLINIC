@@ -116,6 +116,12 @@ class StaffController extends Controller
 
     public function show(Staff $staff)
     {
+        // Lazy-generate QR token for staff that pre-date the feature
+        if (empty($staff->qr_token)) {
+            $staff->attributes['qr_token'] = Staff::generateQrToken();
+            $staff->saveQuietly();
+        }
+
         return response()->json($staff);
     }
 
@@ -185,6 +191,22 @@ class StaffController extends Controller
             'message' => 'Staff record moved to trash.',
             'id' => $staff->id,
         ]);
+    }
+
+    public function regenerateQr(Staff $staff): \Illuminate\Http\JsonResponse
+    {
+        $newToken = Staff::generateQrToken();
+        $staff->attributes['qr_token'] = $newToken;
+        $staff->saveQuietly();
+
+        AuditLogService::record(
+            'qr.regenerate',
+            "Regenerated QR token for staff #{$staff->id}",
+            'staff',
+            $staff->id
+        );
+
+        return response()->json(['qr_token' => $newToken]);
     }
 
     public function trashed(Request $request)

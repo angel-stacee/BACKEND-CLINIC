@@ -11,6 +11,7 @@ use App\Services\MedicineInventoryService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 
@@ -313,9 +314,11 @@ class MedicineController extends Controller
             'issued_to_id' => 'nullable|string|max:100',
             'issued_to_name' => 'nullable|string|max:255',
             'notes' => 'nullable|string|max:500',
+            'strategy' => 'nullable|in:fefo,fifo,lifo',
         ]);
 
         $medicine = Medicine::findOrFail($validated['medicine_id']);
+        $strategy = $validated['strategy'] ?? 'fefo';
 
         $result = $this->inventoryService->issueStock(
             $medicine,
@@ -325,11 +328,23 @@ class MedicineController extends Controller
                 'id' => $validated['issued_to_id'] ?? null,
                 'name' => $validated['issued_to_name'] ?? null,
                 'notes' => $validated['notes'] ?? null,
-            ]
+            ],
+            null,
+            $strategy
+        );
+
+        \App\Services\AuditLogService::record(
+            'medicine.dispense',
+            "Dispensed {$validated['quantity']} {$medicine->unit}(s) of {$medicine->medicine_name} via " . strtoupper($strategy),
+            'medicine',
+            $medicine->id,
+            ['quantity' => (int) $validated['quantity'], 'strategy' => $strategy],
+            $request->user(),
+            $request
         );
 
         return response()->json([
-            'message' => "Successfully issued {$validated['quantity']} {$medicine->unit}(s) of {$medicine->medicine_name} via FEFO.",
+            'message' => "Successfully issued {$validated['quantity']} {$medicine->unit}(s) of {$medicine->medicine_name} via " . strtoupper($strategy) . '.',
             'result' => $result,
         ]);
     }
@@ -475,24 +490,54 @@ class MedicineController extends Controller
         $oldStock = (int) $medicine->stock;
         $newStock = (int) $validated['stock'];
 
-        $medicine->update($validated);
+        DB::transaction(function () use ($medicine, $validated, $oldStock, $newStock) {
+            $medicine->update($validated);
 
-        // If stock was adjusted directly in edit modal, record difference in latest batch or create adjustment
-        if ($newStock !== $oldStock) {
-            $diff = $newStock - $oldStock;
-            if ($diff > 0 && $medicine->expiration_date) {
-                // Additional stock
-                $this->inventoryService->addBatch([
-                    'medicine_id' => $medicine->id,
-                    'quantity' => $diff,
-                    'date_added' => now()->toDateString(),
-                    'expiration_date' => $medicine->expiration_date,
-                    'remarks' => 'Stock adjustment via edit',
-                ]);
+            // Keep batch inventory and transaction ledger in sync when stock is edited directly
+            if ($newStock !== $oldStock) {
+                $diff = $newStock - $oldStock;
+                if ($diff > 0) {
+                    $this->inventoryService->addBatch([
+                        'medicine_id' => $medicine->id,
+                        'quantity' => $diff,
+                        'date_added' => now()->toDateString(),
+                        'expiration_date' => $medicine->expiration_date,
+                        'remarks' => 'Stock adjustment (increase) via edit',
+                    ]);
+                } else {
+                    $toDeduct = abs($diff);
+                    $batches = \App\Models\MedicineBatch::where('medicine_id', $medicine->id)
+                        ->where('current_quantity', '>', 0)
+                        ->orderBy('expiration_date', 'asc')
+                        ->orderBy('id', 'asc')
+                        ->lockForUpdate()
+                        ->get();
+
+                    foreach ($batches as $batch) {
+                        if ($toDeduct <= 0) {
+                            break;
+                        }
+                        $take = min($toDeduct, (int) $batch->current_quantity);
+                        $batch->current_quantity -= $take;
+                        $batch->save();
+                        $toDeduct -= $take;
+
+                        \App\Models\MedicineTransaction::create([
+                            'medicine_id' => $medicine->id,
+                            'medicine_batch_id' => $batch->id,
+                            'transaction_type' => 'adjustment',
+                            'quantity' => -$take,
+                            'batch_number' => $batch->batch_number,
+                            'expiration_date' => $batch->expiration_date,
+                            'performed_by' => auth()->id(),
+                            'notes' => 'Stock adjustment (decrease) via edit',
+                        ]);
+                    }
+                }
             }
-        }
 
-        $medicine->recalculateStock();
+            $medicine->recalculateStock();
+        });
 
         try {
             app(\App\Services\NotificationService::class)->syncAll();
@@ -814,8 +859,14 @@ class MedicineController extends Controller
             ]);
         }
 
-        // Overall trend across all medicines
+        // Overall trend across all medicines (exclude visits already logged in medicine_transactions to avoid double-counting)
         $visits = ClinicVisit::whereNotNull('medicine_id')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('medicine_transactions')
+                    ->whereColumn('medicine_transactions.clinic_visit_id', 'clinic_visits.id')
+                    ->where('medicine_transactions.transaction_type', 'dispense');
+            })
             ->selectRaw('visit_date, SUM(medicine_quantity) as total_dispensed')
             ->groupBy('visit_date')
             ->orderBy('visit_date', 'asc')

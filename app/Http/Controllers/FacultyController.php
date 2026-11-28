@@ -110,6 +110,12 @@ class FacultyController extends Controller
 
     public function show(Faculty $faculty)
     {
+        // Lazy-generate QR token for faculty that pre-date the feature
+        if (empty($faculty->qr_token)) {
+            $faculty->qr_token = Faculty::generateQrToken();
+            $faculty->saveQuietly();
+        }
+
         return response()->json($faculty);
     }
 
@@ -163,6 +169,22 @@ class FacultyController extends Controller
             'message' => 'Faculty record moved to trash.',
             'id' => $faculty->id,
         ]);
+    }
+
+    public function regenerateQr(Faculty $faculty): \Illuminate\Http\JsonResponse
+    {
+        $newToken = Faculty::generateQrToken();
+        $faculty->qr_token = $newToken;
+        $faculty->saveQuietly();
+
+        AuditLogService::record(
+            'qr.regenerate',
+            "Regenerated QR token for faculty #{$faculty->id}",
+            'faculty',
+            $faculty->id
+        );
+
+        return response()->json(['qr_token' => $newToken]);
     }
 
     public function trashed(Request $request)

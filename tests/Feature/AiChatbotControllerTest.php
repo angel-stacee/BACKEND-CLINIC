@@ -15,17 +15,29 @@ class AiChatbotControllerTest extends TestCase
     {
         parent::setUp();
 
-        Schema::create('students', fn ($table) => $table->id());
-        Schema::create('staff', fn ($table) => $table->id());
-        Schema::create('faculties', fn ($table) => $table->id());
+        Schema::create('students', function ($table) {
+            $table->id();
+            $table->string('course')->nullable();
+            $table->softDeletes();
+        });
+        Schema::create('staff', function ($table) {
+            $table->id();
+            $table->softDeletes();
+        });
+        Schema::create('faculties', function ($table) {
+            $table->id();
+            $table->softDeletes();
+        });
         Schema::create('clinic_visits', function ($table) {
             $table->id();
             $table->date('visit_date');
+            $table->softDeletes();
         });
         Schema::create('medicines', function ($table) {
             $table->id();
             $table->unsignedInteger('stock');
             $table->unsignedInteger('minimum_stock');
+            $table->softDeletes();
         });
     }
 

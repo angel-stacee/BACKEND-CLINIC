@@ -75,24 +75,23 @@ class DashboardController extends Controller
             ->get();
 
         $visitReasons = ClinicVisit::query()
-            ->select(['id', 'reason', 'symptoms'])
+            ->selectRaw("
+                CASE
+                    WHEN LOWER(COALESCE(reason, '')) = 'other' AND COALESCE(symptoms, '') <> '' THEN symptoms
+                    WHEN COALESCE(reason, '') <> '' THEN reason
+                    ELSE 'Other'
+                END as label,
+                COUNT(*) as value
+            ")
+            ->groupBy('label')
+            ->orderByDesc('value')
+            ->limit(6)
             ->get()
-            ->groupBy(function ($v) {
-                $reason = trim((string) ($v->reason ?? ''));
-                $symptoms = trim((string) ($v->symptoms ?? ''));
-                if (strtolower($reason) === 'other' && $symptoms !== '') {
-                    return $symptoms;
-                }
-
-                return $reason !== '' ? $reason : 'Other';
-            })
-            ->map(fn ($group, $name) => [
-                'label' => $name,
-                'value' => $group->count(),
+            ->map(fn ($row) => [
+                'label' => $row->label,
+                'value' => (int) $row->value,
             ])
-            ->sortByDesc('value')
-            ->values()
-            ->take(6);
+            ->values();
 
         $recentStudents = Student::query()
             ->select([

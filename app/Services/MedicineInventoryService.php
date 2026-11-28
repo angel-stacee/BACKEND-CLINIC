@@ -112,7 +112,8 @@ class MedicineInventoryService
         Medicine $medicine,
         int $quantityRequested,
         array $recipient = [],
-        ?ClinicVisit $clinicVisit = null
+        ?ClinicVisit $clinicVisit = null,
+        string $strategy = 'fefo'
     ): array {
         if ($quantityRequested <= 0) {
             throw ValidationException::withMessages([
@@ -120,24 +121,38 @@ class MedicineInventoryService
             ]);
         }
 
-        return DB::transaction(function () use ($medicine, $quantityRequested, $recipient, $clinicVisit) {
+        $strategy = strtolower(trim($strategy));
+        if (! in_array($strategy, ['fefo', 'fifo', 'lifo'], true)) {
+            $strategy = 'fefo';
+        }
+
+        return DB::transaction(function () use ($medicine, $quantityRequested, $recipient, $clinicVisit, $strategy) {
             // Lock medicine row to prevent concurrent race conditions
             $lockedMed = Medicine::where('id', $medicine->id)->lockForUpdate()->firstOrFail();
 
             $today = now()->toDateString();
 
-            // Fetch available unexpired batches in strict FEFO + FIFO order
-            $batches = MedicineBatch::query()
+            // Fetch available unexpired batches ordered by the selected rotation strategy (never allow expired)
+            $batchQuery = MedicineBatch::query()
                 ->where('medicine_id', $lockedMed->id)
                 ->where('current_quantity', '>', 0)
                 ->where(function ($q) use ($today) {
                     $q->whereNull('expiration_date')->orWhere('expiration_date', '>=', $today);
-                })
-                ->orderBy('expiration_date', 'asc') // FEFO
-                ->orderBy('date_added', 'asc')       // FIFO
-                ->orderBy('id', 'asc')
-                ->lockForUpdate()
-                ->get();
+                });
+
+            if ($strategy === 'fifo') {
+                $batchQuery->orderBy('date_added', 'asc')->orderBy('id', 'asc');
+            } elseif ($strategy === 'lifo') {
+                $batchQuery->orderBy('date_added', 'desc')->orderBy('id', 'desc');
+            } else {
+                // Default FEFO: earliest expiration date first, then FIFO tie-breaker
+                $batchQuery->orderByRaw('CASE WHEN expiration_date IS NULL THEN 1 ELSE 0 END ASC')
+                    ->orderBy('expiration_date', 'asc')
+                    ->orderBy('date_added', 'asc')
+                    ->orderBy('id', 'asc');
+            }
+
+            $batches = $batchQuery->lockForUpdate()->get();
 
             // If legacy record has stock but no batches registered yet, auto-create initial batch
             if ($batches->isEmpty() && (int) $lockedMed->stock > 0) {
@@ -241,7 +256,7 @@ class MedicineInventoryService
                 if ($dispenseTxs->isNotEmpty()) {
                     foreach ($dispenseTxs as $tx) {
                         if ($tx->medicine_batch_id) {
-                            $batch = MedicineBatch::find($tx->medicine_batch_id);
+                            $batch = MedicineBatch::where('id', $tx->medicine_batch_id)->lockForUpdate()->first();
                             if ($batch) {
                                 $batch->current_quantity += $tx->quantity;
                                 $batch->save();
@@ -269,6 +284,7 @@ class MedicineInventoryService
             // Fallback: restore to the latest active batch or default batch
             $targetBatch = MedicineBatch::where('medicine_id', $medicineId)
                 ->orderByDesc('id')
+                ->lockForUpdate()
                 ->first();
 
             if ($targetBatch) {

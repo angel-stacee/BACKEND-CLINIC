@@ -2,12 +2,13 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasSoftDeleteUniqueToken;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Staff extends Model
 {
-    use SoftDeletes;
+    use HasSoftDeleteUniqueToken, SoftDeletes;
     protected $table = 'staff';
 
     protected $fillable = [
@@ -22,7 +23,13 @@ class Staff extends Model
         'birth_date',
         'contact_number',
         'address',
+        'qr_token',
     ];
+
+    public static function generateQrToken(): string
+    {
+        return 'TCMS-QR-' . bin2hex(random_bytes(12));
+    }
 
     protected $appends = [
         'employee_id',
@@ -31,13 +38,16 @@ class Staff extends Model
     protected static function booted()
     {
         static::creating(function ($staff) {
-            if (empty($staff->employee_id) && !empty($staff->staff_id)) {
-                $staff->employee_id = $staff->staff_id;
+            if (empty($staff->attributes['employee_id']) && ! empty($staff->attributes['staff_id'])) {
+                $staff->attributes['employee_id'] = $staff->attributes['staff_id'];
+            }
+            if (empty($staff->attributes['qr_token'])) {
+                $staff->attributes['qr_token'] = self::generateQrToken();
             }
         });
         static::updating(function ($staff) {
-            if (empty($staff->employee_id) && !empty($staff->staff_id)) {
-                $staff->employee_id = $staff->staff_id;
+            if (empty($staff->attributes['employee_id']) && ! empty($staff->attributes['staff_id'])) {
+                $staff->attributes['employee_id'] = $staff->attributes['staff_id'];
             }
         });
     }

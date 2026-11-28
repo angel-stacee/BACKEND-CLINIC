@@ -103,11 +103,11 @@ class MedicineReportsVisitsTest extends TestCase
             'minimum_stock' => 5,
         ]);
 
-        // Expiring soon medicine (within 30 days)
+        // Expiring soon medicine (within 3 days)
         Medicine::create([
             'medicine_name' => 'Expiring Soon Cough Syrup',
             'treatment_type' => 'Medication',
-            'expiration_date' => Carbon::now()->addDays(10)->toDateString(),
+            'expiration_date' => Carbon::now()->addDays(2)->toDateString(),
             'unit' => 'Bottle',
             'stock' => 5,
             'minimum_stock' => 2,

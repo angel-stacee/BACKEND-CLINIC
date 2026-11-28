@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
 
 class AiChatbotController extends Controller
 {
-    private const OUT_OF_SCOPE_REPLY = 'I can only help with TCC Clinic topics such as clinic visits, patient records, medicine inventory, clinic workflows, and general health questions. Please ask a clinic-related question.';
+    private const OUT_OF_SCOPE_REPLY = 'I can only help with TCC Clinic topics, such as clinic visits, patient records, medicine inventory, clinic workflows, and general health questions. Please ask a clinic-related question.';
     
     private const MEDICAL_REFERRAL_REPLY = "I'm sorry, but I cannot suggest or prescribe medicines. For medical concerns like this, please visit the TCC Clinic and consult with our professional nurse or doctor during operating hours (Monday to Friday, 8:00 AM – 5:00 PM) so they can properly assess your condition.";
 
@@ -37,15 +37,16 @@ class AiChatbotController extends Controller
 
         $latestUserMessage = end($messages)['content'] ?? '';
 
-        // Check if user is initiating or continuing an interactive patient intake conversation
-        $intakeResponse = $this->handlePatientIntake($messages);
-        if ($intakeResponse !== null) {
-            return response()->json($intakeResponse);
+        // Security: Do not create patient records from unvalidated client-supplied chat history.
+        if (preg_match('/\b(register|add|create|enroll|new)\b.*\b(student|patient|faculty|staff)\b/i', $latestUserMessage)) {
+            return response()->json([
+                'message' => "For data integrity and validation, please register new patients directly using the **Patient Management** form (`Students`, `Faculty`, or `Staff`) or the **Quick Register** button in **Clinic Visits**.",
+            ]);
         }
 
         // Detect if this is a medical query
         $isMedicalQuery = (bool) preg_match(
-            '/\b(headache|fever|pain|cough|cold|flu|sick|ill|nausea|vomit|diarrhea|dizzy|sore throat|stomach|injury|wound|bleed|burn|allergy|asthma|medicine for|medication for|suggest.*medicine|what.*take|treat|cure|remedy|prescribe|symptom)/i',
+            '/\b(?:headache|fever|pain|cough|cold|flu|sick|ill|nausea|vomit|diarrhea|dizzy|sore throat|stomach|injury|wound|bleed|burn|allergy|asthma|medicine for|medication for|suggest.*medicine|what.*take|treat|cure|remedy|prescribe|symptom)\b/i',
             $latestUserMessage
         );
 
@@ -62,8 +63,8 @@ class AiChatbotController extends Controller
         }
 
         $apiKey = config('services.gemini.key');
-        $model = config('services.gemini.model', 'gemini-3.6-flash');
-        $fallbackModel = config('services.gemini.fallback_model', 'gemini-3.5-flash');
+        $model = config('services.gemini.model', 'gemini-2.0-flash');
+        $fallbackModel = config('services.gemini.fallback_model', 'gemini-1.5-flash');
 
         $user = $request->user();
         $groundingData = $this->buildDatabaseGroundingContext($latestUserMessage, $user);
@@ -1172,20 +1173,14 @@ class AiChatbotController extends Controller
 
         if ($matchedCourseKey) {
             $courseCode = $recognizedCourses[$matchedCourseKey];
-            $courseStudents = Student::where('course', 'like', "%{$courseCode}%")->get();
-            $count = $courseStudents->count();
+            $count = Student::where('course', 'like', "%{$courseCode}%")->count();
 
-            $studentDetails = $courseStudents->map(
-                fn ($s) => "• **{$s->first_name} {$s->last_name}** (`{$s->student_id}`) — {$s->year_level}".($s->section ? " ({$s->section})" : "")
-            )->implode("\n");
-
-            $facts[] = "STUDENT COURSE QUERY: Total registered students in {$courseCode}: {$count}. "
-                . ($count > 0 ? "Student list: " . $courseStudents->map(fn ($s) => "{$s->first_name} {$s->last_name} (ID: {$s->student_id}, {$s->year_level})")->implode('; ') : "No students are currently registered under {$courseCode}.");
+            // Privacy: Send only aggregate counts to external AI provider, never student PII
+            $facts[] = "STUDENT COURSE QUERY: Total registered students in {$courseCode}: {$count}.";
 
             $directReply = "🎓 **{$courseCode} Students Summary**\n\n"
                 . "There " . ($count === 1 ? "is currently **1** student" : "are currently **{$count}** students")
                 . " enrolled in **{$courseCode}** registered in the clinic database.\n\n"
-                . ($count > 0 ? "{$studentDetails}\n\n" : "")
                 . "You can view complete student medical records and profiles in the **Patient Management** section.";
         } elseif ((str_contains($q, 'total') || str_contains($q, 'how many') || str_contains($q, 'count') || str_contains($q, 'summary')) && (str_contains($q, 'student') || str_contains($q, 'course'))) {
             $courseList = collect($studentsByCourse)->map(fn ($c, $k) => "• **{$k}**: {$c} student(s)")->implode("\n");
@@ -1195,8 +1190,7 @@ class AiChatbotController extends Controller
                 . "You can manage students and view their medical files under **Patient Management**.";
         }
 
-        // 2. Check for Student Queries
-        // Look for ID numbers (5-15 digits) or keywords like "student", "course"
+        // 2. Check for Individual Student Queries (returned directly to authorized staff, never sent as PII to Gemini)
         $hasIdMatch = preg_match('/\b(\d{5,15})\b/', $userQuery, $idMatch);
         $isStudentQuery = str_contains($q, 'student') || str_contains($q, 'find') || str_contains($q, 'search') || $hasIdMatch;
 
@@ -1207,7 +1201,6 @@ class AiChatbotController extends Controller
             }
 
             if (! $studentSearch && (str_contains($q, 'student') || str_contains($q, 'find') || str_contains($q, 'who is') || str_contains($q, 'search'))) {
-                // Try to find name tokens
                 $words = preg_split('/[\s,]+/', preg_replace('/[^\w\s]/', '', $q));
                 $stopWords = ['student', 'find', 'search', 'show', 'who', 'is', 'the', 'details', 'record', 'records', 'info', 'about', 'can', 'you', 'please', 'me', 'tell'];
                 $filteredWords = array_values(array_filter($words, fn ($w) => ! in_array($w, $stopWords, true) && strlen($w) > 2));
@@ -1225,24 +1218,23 @@ class AiChatbotController extends Controller
             }
 
             if ($studentSearch) {
-                $visits = $studentSearch->clinicVisits()->latest('visit_date')->take(5)->get();
                 $visitCount = $studentSearch->clinicVisits()->count();
-                $lastVisit = $visits->first();
-                $lastVisitInfo = $lastVisit ? "Last visited on {$lastVisit->visit_date} for '{$lastVisit->reason}'" : "No clinic visits recorded yet.";
+                $lastVisit = $studentSearch->clinicVisits()->latest('visit_date')->first();
+                $lastVisitInfo = $lastVisit ? "Last visited on {$lastVisit->visit_date}." : "No clinic visits recorded yet.";
 
-                $facts[] = "FOUND STUDENT RECORD: Name: {$studentSearch->first_name} {$studentSearch->last_name}, Student ID: {$studentSearch->student_id}, Course: {$studentSearch->course}, Year/Section: {$studentSearch->year_level} - {$studentSearch->section}, Sex: {$studentSearch->sex}, Contact: {$studentSearch->contact_number}, Total Visits: {$visitCount}. {$lastVisitInfo}.";
+                // Privacy: Do not embed student PII in $facts sent to Gemini
+                $facts[] = "STUDENT LOOKUP: A matching student record was found in the local database (Total visits: {$visitCount}).";
 
                 $directReply = "👤 **Student Record Found**\n\n"
                     ."• **Name**: {$studentSearch->first_name} {$studentSearch->middle_name} {$studentSearch->last_name}\n"
                     ."• **Student ID**: `{$studentSearch->student_id}`\n"
                     ."• **Course & Year**: {$studentSearch->course} - {$studentSearch->year_level} ({$studentSearch->section})\n"
                     ."• **Sex**: {$studentSearch->sex}\n"
-                    ."• **Contact**: {$studentSearch->contact_number}\n"
                     ."• **Total Clinic Visits**: {$visitCount}\n"
                     ."• **Status**: {$lastVisitInfo}\n\n"
                     ."You can view full medical details in the **Student Records** section.";
             } elseif ($hasIdMatch && ! str_contains($q, 'patient')) {
-                $facts[] = "STUDENT QUERY: ID '{$idMatch[1]}' was searched but NOT FOUND in the database.";
+                $facts[] = "STUDENT QUERY: Requested ID was NOT FOUND in the database.";
                 $directReply = "❌ **Student Not Found**\n\nNo student record with ID `{$idMatch[1]}` was found in the clinic database. Please verify the Student ID number.";
             }
         }

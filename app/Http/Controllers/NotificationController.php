@@ -24,19 +24,23 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        // 1. Sync latest database alerts
-        $this->notificationService->syncAll($user);
+        // 1. Sync latest database alerts (throttled on polling to avoid heavy synchronous queries on every request)
+        if (! \Illuminate\Support\Facades\Cache::has('tcc_notifications_last_sync')) {
+            $this->notificationService->syncAll($user);
+            \Illuminate\Support\Facades\Cache::put('tcc_notifications_last_sync', true, 180);
+        }
+
+        $userScope = function ($q) use ($user) {
+            if ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereNull('user_id');
+            } else {
+                $q->whereNull('user_id');
+            }
+        };
 
         // 2. Query notifications for this user or clinic-wide
-        $query = ClinicNotification::query()
-            ->where(function ($q) use ($user) {
-                if ($user) {
-                    $q->where('user_id', $user->id)
-                      ->orWhereNull('user_id');
-                } else {
-                    $q->whereNull('user_id');
-                }
-            });
+        $query = ClinicNotification::query()->where($userScope);
 
         // Filter by category if requested
         if ($request->filled('category') && $request->category !== 'all') {
@@ -56,17 +60,15 @@ class NotificationController extends Controller
             ->limit(50)
             ->get();
 
-        // Category breakdown counts
+        // Category breakdown counts (scoped to current user or clinic-wide)
+        $scopedBase = ClinicNotification::query()->where($userScope);
         $counts = [
-            'total' => ClinicNotification::where(function ($q) use ($user) {
-                if ($user) $q->where('user_id', $user->id)->orWhereNull('user_id');
-                else $q->whereNull('user_id');
-            })->count(),
+            'total' => (clone $scopedBase)->count(),
             'unread' => $totalUnread,
-            'medication_reminders' => ClinicNotification::where('category', 'medication_reminder')->where('is_read', false)->count(),
-            'patient_attention' => ClinicNotification::where('category', 'patient_attention')->where('is_read', false)->count(),
-            'low_stock' => ClinicNotification::where('category', 'low_stock')->where('is_read', false)->count(),
-            'expired_medicine' => ClinicNotification::where('category', 'expired_medicine')->where('is_read', false)->count(),
+            'medication_reminders' => (clone $scopedBase)->where('category', 'medication_reminder')->where('is_read', false)->count(),
+            'patient_attention' => (clone $scopedBase)->where('category', 'patient_attention')->where('is_read', false)->count(),
+            'low_stock' => (clone $scopedBase)->where('category', 'low_stock')->where('is_read', false)->count(),
+            'expired_medicine' => (clone $scopedBase)->where('category', 'expired_medicine')->where('is_read', false)->count(),
         ];
 
         return response()->json([
@@ -82,14 +84,17 @@ class NotificationController extends Controller
      */
     public function markAsRead(Request $request, int|string $id): JsonResponse
     {
-        $notification = ClinicNotification::find($id);
+        $user = $request->user();
+        $notification = ClinicNotification::findOrFail($id);
 
-        if ($notification) {
-            $notification->update([
-                'is_read' => true,
-                'read_at' => Carbon::now(),
-            ]);
+        if ($notification->user_id !== null && (! $user || (int) $notification->user_id !== (int) $user->id)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
+
+        $notification->update([
+            'is_read' => true,
+            'read_at' => Carbon::now(),
+        ]);
 
         return response()->json([
             'status' => 'success',
@@ -130,11 +135,14 @@ class NotificationController extends Controller
      */
     public function destroy(Request $request, int|string $id): JsonResponse
     {
-        $notification = ClinicNotification::find($id);
+        $user = $request->user();
+        $notification = ClinicNotification::findOrFail($id);
 
-        if ($notification) {
-            $notification->delete();
+        if ($notification->user_id !== null && (! $user || (int) $notification->user_id !== (int) $user->id)) {
+            return response()->json(['message' => 'Forbidden.'], 403);
         }
+
+        $notification->delete();
 
         return response()->json([
             'status' => 'success',

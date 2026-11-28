@@ -21,10 +21,16 @@ class ClinicVisitController extends Controller
             'student_id' => ['nullable', 'integer', 'exists:students,id'],
             'faculty_id' => ['nullable', 'integer', 'exists:faculties,id'],
             'staff_id' => ['nullable', 'integer', 'exists:staff,id'],
+            'patient_type' => ['nullable', 'in:all,student,faculty,staff'],
+            'date_filter' => ['nullable', 'in:all,today,week,month'],
+            'treatment_type' => ['nullable', 'string', 'max:100'],
             'search' => ['nullable', 'string', 'max:100'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
         $search = trim($validated['search'] ?? '');
+        $patientType = $validated['patient_type'] ?? 'all';
+        $dateFilter = $validated['date_filter'] ?? 'all';
+        $treatmentType = trim((string) ($validated['treatment_type'] ?? ''));
         $dateSearch = $this->normalizeVisitDateSearch($search);
 
         $query = ClinicVisit::query()
@@ -58,6 +64,21 @@ class ClinicVisitController extends Controller
             ->when($validated['student_id'] ?? null, fn (Builder $query, int $id) => $query->where('student_id', $id))
             ->when($validated['faculty_id'] ?? null, fn (Builder $query, int $id) => $query->where('faculty_id', $id))
             ->when($validated['staff_id'] ?? null, fn (Builder $query, int $id) => $query->where('staff_id', $id))
+            ->when($patientType === 'student', fn (Builder $query) => $query->whereNotNull('student_id'))
+            ->when($patientType === 'faculty', fn (Builder $query) => $query->whereNotNull('faculty_id'))
+            ->when($patientType === 'staff', fn (Builder $query) => $query->whereNotNull('staff_id'))
+            ->when($dateFilter === 'today', fn (Builder $query) => $query->whereDate('visit_date', now()->toDateString()))
+            ->when($dateFilter === 'week', fn (Builder $query) => $query->whereBetween('visit_date', [now()->startOfWeek()->toDateString(), now()->endOfWeek()->toDateString()]))
+            ->when($dateFilter === 'month', fn (Builder $query) => $query->whereBetween('visit_date', [now()->startOfMonth()->toDateString(), now()->endOfMonth()->toDateString()]))
+            ->when($treatmentType !== '' && strtolower($treatmentType) !== 'all', function (Builder $query) use ($treatmentType) {
+                if (strtolower($treatmentType) === 'medicine') {
+                    $query->whereNotNull('medicine_id');
+                } elseif (strtolower($treatmentType) === 'none') {
+                    $query->whereNull('medicine_id');
+                } else {
+                    $query->where('treatment', 'like', '%'.$treatmentType.'%');
+                }
+            })
             ->when($search !== '', function (Builder $query) use ($search, $dateSearch) {
                 $term = $search;
                 $contains = '%'.$term.'%';
@@ -562,20 +583,32 @@ class ClinicVisitController extends Controller
     {
         $visit = ClinicVisit::onlyTrashed()->findOrFail($id);
 
-        DB::transaction(function () use ($visit) {
-            $medicineId = $visit->medicine_id;
-            $quantity = (int) ($visit->medicine_quantity ?? 0);
+        try {
+            DB::transaction(function () use ($visit) {
+                $medicineId = $visit->medicine_id;
+                $quantity = (int) ($visit->medicine_quantity ?? 0);
 
-            if ($medicineId && $quantity > 0) {
-                $medicine = Medicine::where('id', $medicineId)->lockForUpdate()->first();
-                if ($medicine) {
-                    $medicine->stock = max(0, (int) $medicine->stock - $quantity);
-                    $medicine->save();
+                $visit->restore();
+
+                if ($medicineId && $quantity > 0) {
+                    $medicine = Medicine::find($medicineId);
+                    if ($medicine) {
+                        app(\App\Services\MedicineInventoryService::class)->issueStock(
+                            $medicine,
+                            $quantity,
+                            [
+                                'notes' => "Dispensed upon restoring clinic visit #{$visit->id}",
+                            ],
+                            $visit
+                        );
+                    }
                 }
-            }
-
-            $visit->restore();
-        });
+            });
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'Clinic visit restored successfully.',

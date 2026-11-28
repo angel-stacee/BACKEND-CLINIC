@@ -23,8 +23,14 @@ class AuthController extends Controller
         $inputPassword = (string) $request->input('password', '');
 
         $request->validate([
-            'password' => 'required',
+            'password' => 'required|string',
         ]);
+
+        if ($loginInput === '') {
+            return response()->json([
+                'message' => 'Email or user identifier is required.',
+            ], 422);
+        }
 
         $throttleKey = 'login_attempt:' . Str::transliterate($loginInput . '|' . $request->ip());
 
@@ -43,46 +49,10 @@ class AuthController extends Controller
         $user = User::query()
             ->select(['id', 'name', 'email', 'role', 'profile_picture', 'password'])
             ->where('email', $loginInput)
-            ->orWhere('id', $loginInput)
+            ->when(ctype_digit($loginInput), fn ($q) => $q->orWhere('id', (int) $loginInput))
             ->first();
 
-        if (! $user && in_array($loginInput, ['admin', 'nurse', 'clinic', 'admin.clinic', 'admin.clinic.edu'], true)) {
-            $user = User::where('email', 'admin.clinic.edu@gmail.com')->first();
-        }
-
-        if (! $user && in_array($loginInput, ['staff', 'staff.clinic', 'staff.clinic.edu', 'staff.clinic.edu@gmail.com'], true)) {
-            $user = User::firstOrCreate(
-                ['email' => 'staff.clinic.edu@gmail.com'],
-                [
-                    'name' => 'Clinic Staff',
-                    'role' => 'Nurse',
-                    'password' => Hash::make('password123'),
-                    'email_verified_at' => now(),
-                ]
-            );
-        }
-
-        if (! $user && in_array($loginInput, ['test', 'test.clinic', 'test.clinic.edu', 'test.clinic.edu@gmail.com'], true)) {
-            $user = User::firstOrCreate(
-                ['email' => 'test.clinic.edu@gmail.com'],
-                [
-                    'name' => 'Test Clinic Account',
-                    'role' => 'Nurse',
-                    'password' => Hash::make('password123'),
-                    'email_verified_at' => now(),
-                ]
-            );
-        }
-
-        $isValidPassword = false;
-        if ($user) {
-            if (Hash::check($inputPassword, $user->password)) {
-                $isValidPassword = true;
-            } elseif (in_array($inputPassword, ['password123', 'admin', 'admin123', 'password', '12345678', 'clinic123'], true)) {
-                $isValidPassword = true;
-                $user->update(['password' => Hash::make($inputPassword)]);
-            }
-        }
+        $isValidPassword = $user && Hash::check($inputPassword, $user->password);
 
         if (! $user || ! $isValidPassword) {
             // Register failed attempt (locked for 60 seconds upon reaching 5 attempts)
@@ -109,6 +79,16 @@ class AuthController extends Controller
         // On successful credentials, clear the rate limiter
         RateLimiter::clear($throttleKey);
 
+        \App\Services\AuditLogService::record(
+            'auth.login',
+            "User {$user->email} logged in",
+            'user',
+            $user->id,
+            [],
+            $user,
+            $request
+        );
+
         $token = $user->createToken(
             'clinic-system-token'
         )->plainTextToken;
@@ -123,7 +103,19 @@ class AuthController extends Controller
     public function logout(Request $request)
     {
         try {
-            $request->user()?->currentAccessToken()?->delete();
+            $user = $request->user();
+            if ($user) {
+                \App\Services\AuditLogService::record(
+                    'auth.logout',
+                    "User {$user->email} logged out",
+                    'user',
+                    $user->id,
+                    [],
+                    $user,
+                    $request
+                );
+            }
+            $user?->currentAccessToken()?->delete();
         } catch (\Throwable $e) {
             // Ignore token deletion error on logout
         }
@@ -253,17 +245,6 @@ class AuthController extends Controller
         $email = $cleanEmail;
 
         $user = User::where('email', $email)->first();
-        if (! $user && in_array($email, ['staff.clinic.edu@gmail.com', 'admin.clinic.edu@gmail.com'], true)) {
-            $user = User::firstOrCreate(
-                ['email' => $email],
-                [
-                    'name' => ($email === 'staff.clinic.edu@gmail.com') ? 'Clinic Staff' : 'Angel Stacee',
-                    'role' => 'Nurse',
-                    'password' => Hash::make('password123'),
-                    'email_verified_at' => now(),
-                ]
-            );
-        }
 
         if (! $user) {
             return response()->json([
@@ -299,23 +280,11 @@ class AuthController extends Controller
 
         $fromAddress = config('mail.from.address');
         if (! $fromAddress || $fromAddress === 'null' || $fromAddress === 'hello@example.com') {
-            $fromAddress = env('MAIL_FROM_ADDRESS') ?: config('mail.mailers.smtp.username') ?: env('MAIL_USERNAME') ?: 'repohive@gmail.com';
+            $fromAddress = env('MAIL_FROM_ADDRESS') ?: config('mail.mailers.smtp.username') ?: env('MAIL_USERNAME');
         }
         $fromName = config('mail.from.name') ?: env('MAIL_FROM_NAME') ?: 'TCC CLINIC';
 
-        if ((config('mail.default') === 'log' || ! config('mail.default')) && ! env('BREVO_API_KEY') && ! env('RESEND_API_KEY')) {
-            config([
-                'mail.default' => 'smtp',
-                'mail.mailers.smtp.host' => env('MAIL_HOST') ?: 'smtp.gmail.com',
-                'mail.mailers.smtp.port' => (int) (env('MAIL_PORT') ?: 587),
-                'mail.mailers.smtp.encryption' => env('MAIL_ENCRYPTION') ?: 'tls',
-                'mail.mailers.smtp.username' => env('MAIL_USERNAME') ?: 'repohive@gmail.com',
-                'mail.mailers.smtp.password' => env('MAIL_PASSWORD') ?: 'yujpqejfsfyllahb',
-                'mail.mailers.smtp.timeout' => (int) (env('MAIL_TIMEOUT') ?: 4),
-                'mail.from.address' => $fromAddress,
-                'mail.from.name' => $fromName,
-            ]);
-        } else {
+        if (! app()->environment('testing')) {
             config(['mail.mailers.smtp.timeout' => (int) (env('MAIL_TIMEOUT') ?: 4)]);
         }
 
@@ -400,12 +369,11 @@ class AuthController extends Controller
                 'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your inbox (and Spam folder).",
             ]);
         } catch (\Throwable $e) {
-            $rawError = $e->getMessage();
-            Log::info("Mail delivery note for {$user->email}: ".$rawError);
+            Log::error("Mail delivery failed for {$user->email}: ".$e->getMessage());
 
             return response()->json([
-                'message' => "A 6-digit OTP verification code has been sent to {$user->email}. Please check your inbox or use staff emergency code: 123456.",
-            ]);
+                'message' => 'Unable to send verification email right now. Please contact the clinic administrator or try again later.',
+            ], 503);
         }
     }
 
@@ -433,17 +401,6 @@ class AuthController extends Controller
         $otp = $request->input('otp');
 
         $user = User::where('email', $email)->first();
-        if (! $user && in_array($email, ['staff.clinic.edu@gmail.com', 'admin.clinic.edu@gmail.com'], true)) {
-            $user = User::firstOrCreate(
-                ['email' => $email],
-                [
-                    'name' => ($email === 'staff.clinic.edu@gmail.com') ? 'Clinic Staff' : 'Angel Stacee',
-                    'role' => 'Nurse',
-                    'password' => Hash::make('password123'),
-                    'email_verified_at' => now(),
-                ]
-            );
-        }
 
         if (! $user) {
             return response()->json([
@@ -451,24 +408,27 @@ class AuthController extends Controller
             ], 404);
         }
 
+        $otpThrottleKey = 'otp_verify:' . Str::transliterate($email . '|' . $request->ip());
+        if (RateLimiter::tooManyAttempts($otpThrottleKey, 5)) {
+            $seconds = RateLimiter::availableIn($otpThrottleKey);
+            return response()->json([
+                'message' => "Too many invalid OTP attempts. Please try again in {$seconds} seconds or request a new code.",
+            ], 429);
+        }
+
         $record = DB::table('password_reset_tokens')->where('email', $email)->first();
 
-        $isMasterOtp = ($otp === '123456');
         $isValidOtp = false;
-
-        if ($isMasterOtp) {
-            $isValidOtp = true;
-        } elseif ($record) {
-            if (! Carbon::parse($record->created_at)->addMinutes(30)->isPast()) {
-                if (Hash::check($otp, $record->token)) {
-                    $isValidOtp = true;
-                }
+        if ($record && ! Carbon::parse($record->created_at)->addMinutes(15)->isPast()) {
+            if (Hash::check($otp, $record->token)) {
+                $isValidOtp = true;
             }
         }
 
         if (! $isValidOtp) {
+            RateLimiter::hit($otpThrottleKey, 900);
             return response()->json([
-                'message' => 'Invalid or expired OTP code. Please enter your 6-digit verification code or default code (123456).',
+                'message' => 'Invalid or expired OTP code. Please enter the 6-digit verification code sent to your email.',
             ], 400);
         }
 
@@ -498,17 +458,6 @@ class AuthController extends Controller
         $otp = $request->input('otp');
 
         $user = User::where('email', $email)->first();
-        if (! $user && in_array($email, ['staff.clinic.edu@gmail.com', 'admin.clinic.edu@gmail.com'], true)) {
-            $user = User::firstOrCreate(
-                ['email' => $email],
-                [
-                    'name' => ($email === 'staff.clinic.edu@gmail.com') ? 'Clinic Staff' : 'Angel Stacee',
-                    'role' => 'Nurse',
-                    'password' => Hash::make('password123'),
-                    'email_verified_at' => now(),
-                ]
-            );
-        }
 
         if (! $user) {
             return response()->json([
@@ -516,26 +465,31 @@ class AuthController extends Controller
             ], 404);
         }
 
+        $otpThrottleKey = 'otp_verify:' . Str::transliterate($email . '|' . $request->ip());
+        if (RateLimiter::tooManyAttempts($otpThrottleKey, 5)) {
+            $seconds = RateLimiter::availableIn($otpThrottleKey);
+            return response()->json([
+                'message' => "Too many invalid OTP attempts. Please try again in {$seconds} seconds or request a new code.",
+            ], 429);
+        }
+
         $record = DB::table('password_reset_tokens')->where('email', $email)->first();
 
-        $isMasterOtp = ($otp === '123456');
         $isValidOtp = false;
-
-        if ($isMasterOtp) {
-            $isValidOtp = true;
-        } elseif ($record) {
-            if (! Carbon::parse($record->created_at)->addMinutes(30)->isPast()) {
-                if (Hash::check($otp, $record->token)) {
-                    $isValidOtp = true;
-                }
+        if ($record && ! Carbon::parse($record->created_at)->addMinutes(15)->isPast()) {
+            if (Hash::check($otp, $record->token)) {
+                $isValidOtp = true;
             }
         }
 
         if (! $isValidOtp) {
+            RateLimiter::hit($otpThrottleKey, 900);
             return response()->json([
-                'message' => 'Invalid or expired OTP code. Please enter your 6-digit verification code or 123456.',
+                'message' => 'Invalid or expired OTP code. Please enter the 6-digit verification code sent to your email.',
             ], 400);
         }
+
+        RateLimiter::clear($otpThrottleKey);
 
         $user->update([
             'password' => Hash::make($request->input('password')),

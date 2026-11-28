@@ -42,14 +42,15 @@ class NotificationService
             })
             ->get();
 
-        $activeLowMedIds = $lowMedicines->pluck('id')->toArray();
+        $lowKeys = $lowMedicines->map(fn ($med) => "low_stock_med_{$med->id}_active")->all();
+        $existingAlerts = ClinicNotification::whereIn('unique_key', $lowKeys)
+            ->get()
+            ->keyBy('unique_key');
 
         foreach ($lowMedicines as $med) {
             $key = "low_stock_med_{$med->id}_active";
             $threshold = $med->minimum_stock ?? 5;
-
-            // Check if active alert already exists
-            $existing = ClinicNotification::where('unique_key', $key)->first();
+            $existing = $existingAlerts->get($key);
 
             if (! $existing) {
                 ClinicNotification::create([
@@ -67,23 +68,23 @@ class NotificationService
                     'is_read' => false,
                 ]);
             } else {
-                // Keep description updated with latest count if stock changed while still low
-                $existing->update([
-                    'description' => "Only {$med->stock} {$med->unit} remaining (minimum threshold: {$threshold}).",
-                ]);
+                $desc = "Only {$med->stock} {$med->unit} remaining (minimum threshold: {$threshold}).";
+                if ($existing->description !== $desc) {
+                    $existing->update(['description' => $desc]);
+                }
             }
         }
 
-        // 1b. If any medicine was restocked above minimum_stock, clear its active alert
-        // This ensures: "Generate a new alert if the medicine returns to normal stock and becomes low again."
-        $restockedMedicines = Medicine::query()
+        // 1b. If any medicine was restocked above minimum_stock, clear its active alert in a single query
+        $restockedKeys = Medicine::query()
             ->whereNull('deleted_at')
             ->whereColumn('stock', '>', 'minimum_stock')
-            ->get();
+            ->pluck('id')
+            ->map(fn ($id) => "low_stock_med_{$id}_active")
+            ->all();
 
-        foreach ($restockedMedicines as $med) {
-            $key = "low_stock_med_{$med->id}_active";
-            ClinicNotification::where('unique_key', $key)->delete();
+        if (! empty($restockedKeys)) {
+            ClinicNotification::whereIn('unique_key', $restockedKeys)->delete();
         }
     }
 
