@@ -7,6 +7,8 @@ $defaultOrigins = [
     'http://localhost',
     'https://localhost',
     'capacitor://localhost',
+    'https://tcc-clinic.cloud',
+    'https://www.tcc-clinic.cloud',
 ];
 
 $envOrigins = array_filter(array_map(
